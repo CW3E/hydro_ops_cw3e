@@ -44,3 +44,60 @@ of the journal; it does not silently resume or skip missing targets.
 The approved 2003–2020 plan's execution journal is
 `forcing/status/cleanup/baseline-20030102-20201012-deletion-journal.jsonl`.
 Only its final `completed` event establishes successful execution.
+
+## Completed precipitation-repair originals (separate cleanup scope)
+
+`bin/plan_forcing_repair_cleanup.py` inventories the original hourly snapshots
+from the seven completed Retro precipitation-repair campaigns. This is **not**
+the baseline cleanup plan format and must not be passed to the baseline deletion
+executor. There is no deletion mode in this new planner.
+
+For each proposed old file it verifies the snapshot identity, rejects symlinks,
+protects any inode still used by the canonical replacement, and validates the
+current rain-repair publication through its accepted audit/transaction chain.
+The plan pins replacement identities and the hashes of all required JSON
+evidence. It preserves that evidence, even where the old numerical files may
+eventually be deleted. Reclaim estimates group device/inode pairs and count
+space only when all known hard links are included in the plan; snapshots or
+filesystem-level deduplication may still affect actual savings.
+
+Job **5188478** completed on November 6, 2026. Its plan is
+`forcing/status/cleanup/repair-originals-5188478.json`, with a separate progress
+report. Expected final status is `review_required`, not deletion authorization.
+An operator must review active/queued consumers and retire old retry paths that
+still require originals before execution. All identities and evidence must be
+checked again immediately before separately authorized deletion.
+
+This first inventory excludes NRT originals, repair candidates/windows, old
+summary backups, operational test workspaces, canonical forcing/baselines and
+all model outputs/restarts. Summary backups and other large intermediate files
+will require a subsequent scoped inventory. No files have been deleted by this
+planning work.
+
+The reviewed first batch contains 16,556 paths (approximately 72.7 TB of
+reclaimable allocated storage). The December 31, 1980 snapshot remains protected
+because its inode is still used by production. The user authorized execution
+after consumer review. Active model jobs use canonical forcing/publication JSON,
+and the operational revision tests use current baselines, not these snapshots.
+
+`bin/execute_forcing_repair_cleanup.py --plan PLAN --journal NEW_JOURNAL`
+performs preflight only; `--execute` enables the authorized deletion. The scoped
+SLURM entry point is `slurm/execute_forcing_repair_cleanup.sh`. It holds the
+CONUS precipitation-publication lock, rejects unreviewed active job entry points,
+rechecks every original/replacement/evidence identity, and journals each unlink
+durably. It accounts for multiple snapshot links to the same inode. No recursive
+directory deletion is used. A final `completed` journal event, not submission
+or SLURM completion alone, establishes success.
+
+Snapshot `RETIRED.json` markers disable historical snapshot validation and
+publication retries; existing canonical audit readers continue to use retained
+JSON evidence. Future repairs must prepare new inputs rather than reuse retired
+campaigns. Interrupted execution requires journal review and explicit recovery,
+not blind resubmission. Deleted numerical originals cannot be restored by Git;
+recreating their values would require regeneration from source data.
+
+Execution job **5188493** was submitted after the consumer review and tests
+(707 passed, 4 skipped). Its durable journal will be
+`forcing/status/cleanup/repair-originals-deletion-5188493.jsonl`; its log is
+`forcing/logs/repair-cleanup-execute-5188493.out`. Submission does not establish
+that any deletion has occurred: preflight must pass first.
