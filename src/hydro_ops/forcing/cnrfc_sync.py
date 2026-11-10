@@ -24,7 +24,8 @@ def command(root, stream, frequency, partition, account, dependencies):
     return args + [str(root / 'slurm/sync_cnrfc_forcing.sh'), '--stream', stream, '--frequency', frequency]
 
 
-def submit(root: Path, *, stream='nrt', frequency='all', after=None, partition=None, account=None):
+def submit(root: Path, *, stream='nrt', frequency='all', after=None, partition=None, account=None,
+           require_success=False):
     from hydro_ops.cnrfc_domain import migration_state
     if migration_state(root).get('blocked'):
         print(json.dumps({'status': 'disabled_cnrfc_grid_migration'}), flush=True)
@@ -45,11 +46,21 @@ def submit(root: Path, *, stream='nrt', frequency='all', after=None, partition=N
                     and re.fullmatch(r'\d+', job)):
                 dependencies.append(job)
         args = command(root, stream, frequency, partition, account, dependencies)
+        if require_success:
+            if after is None or not re.fullmatch(r'\d+', str(after)):
+                raise ValueError('A numeric successful parent job is required')
+            args = [a for a in args if not a.startswith('--dependency=')]
+            previous = sorted(set(dependencies)-{str(after)})
+            dependency = 'afterok:'+str(after)
+            if previous:
+                dependency += ',afterany:'+':'.join(previous)
+            args.insert(1, '--dependency='+dependency)
         job = subprocess.check_output(args, cwd=root, text=True).strip().split(';')[0]
         if not re.fullmatch(r'\d+', job):
             raise RuntimeError(f'Unexpected sbatch response: {job}')
         record = {'status': 'submitted', 'job_id': job, 'stream': stream,
-                  'frequency': frequency, 'dependencies': dependencies, 'command': args}
+                  'frequency': frequency, 'dependencies': dependencies, 'command': args,
+                  'require_success': require_success}
         _atomic_json(state / f'submission-{job}.json', record)
         print(json.dumps(record), flush=True)
         return job

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import logging
@@ -20,6 +21,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from hydro_ops.config import Settings
+from hydro_ops.download.source_history import replacement_evidence, write_json
 from hydro_ops.download.stage4_convert import is_netcdf
 from hydro_ops.work import temporary_work_root
 
@@ -314,6 +316,14 @@ class PrismDownloader:
         return is_netcdf(destination) and self._metadata_matches(metadata, release)
 
     def download_one(self, release: PrismRelease) -> str:
+        destination, _ = self.paths(release.data_date, release.element)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        # A stable lock inode serializes the source, sidecar and evidence history.
+        with destination.with_suffix('.download.lock').open('a') as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            return self._download_one_locked(release)
+
+    def _download_one_locked(self, release: PrismRelease) -> str:
         destination, metadata = self.paths(release.data_date, release.element)
         if self.is_current(release):
             LOG.info("SKIP current %s (grid count %d)", destination, release.grid_count)
@@ -350,20 +360,31 @@ class PrismDownloader:
             normalize_netcdf(extracted, normalized, release.data_date, release.element)
             if not is_netcdf(normalized):
                 raise RuntimeError(f"Could not normalize PRISM NetCDF: {expected}")
+            record = {
+                **asdict(release),
+                "data_date": release.data_date.isoformat(),
+                "release_date": release.release_date.isoformat(),
+                "downloaded_at": datetime.now(UTC).isoformat(),
+                "format": "netcdf",
+                "normalization_version": NORMALIZATION_VERSION,
+            }
+            history_path = destination.with_suffix('.history.json')
+            history = json.loads(history_path.read_text()) if history_path.exists() else {
+                'version': 1, 'source': str(destination), 'events': []}
+            event = replacement_evidence(destination, normalized, release.element)
+            event.update(status='prepared', observed_at=record['downloaded_at'],
+                         old_release=json.loads(metadata.read_text()) if metadata.exists() else None,
+                         new_release=record)
+            history['events'].append(event)
+            # Preserve old evidence before replacing anything, even if interrupted.
+            write_json(history_path, history)
             partial = destination.with_name(f"{destination.name}.part")
             shutil.copyfile(normalized, partial)
             partial.replace(destination)
-        record = {
-            **asdict(release),
-            "data_date": release.data_date.isoformat(),
-            "release_date": release.release_date.isoformat(),
-            "downloaded_at": datetime.now(UTC).isoformat(),
-            "format": "netcdf",
-            "normalization_version": NORMALIZATION_VERSION,
-        }
-        metadata_partial = metadata.with_name(f"{metadata.name}.part")
-        metadata_partial.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
-        metadata_partial.replace(metadata)
+        write_json(metadata, record)
+        event.update(status='published', published_at=datetime.now(UTC).isoformat())
+        write_json(history_path, history)
+        LOG.info("PRISM source history %s: %s", history_path, event['comparison'])
         return "downloaded"
 
     def download_range(

@@ -49,7 +49,7 @@ def main():
     job = os.environ['SLURM_JOB_ID']
     state = root / 'forcing/status' / args.domain / ('nrt-catchup-' + job)
     state.mkdir(parents=True, exist_ok=False)
-    scratch = Path(f'/scratch/{os.environ["SLURM_JOB_USER"]}/job_{job}/nrt-subset')
+    scratch = Path(f'/scratch/{os.environ["SLURM_JOB_USER"]}/job_{job}/nrt-subset-{args.domain}')
     scratch.mkdir(parents=True, exist_ok=False)
     if shutil.disk_usage(scratch).free < 20 * 1024**3:
         raise RuntimeError('Insufficient scratch')

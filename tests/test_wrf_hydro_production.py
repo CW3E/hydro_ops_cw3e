@@ -122,10 +122,14 @@ def test_time_metadata_fix_rejects_incorrect_coordinates(tmp_path):
         assert ds["time"].valid_max == 2
 
 
-def test_initialization_preserves_counter_and_physics(tmp_path):
+@pytest.mark.parametrize("explicit_donor", [False, True])
+def test_initialization_preserves_counter_and_physics(tmp_path, explicit_donor):
     from hydro_ops.wrf_hydro.production import ACCUMULATIONS, initialization, restart_names
 
     donor = tmp_path / "nwm/restarts/conus/retro/1986/01"
+    if explicit_donor:
+        donor = tmp_path / "corrected-subdomain-spinup"
+    options = {"donor": donor} if explicit_donor else {}
     donor.mkdir(parents=True)
     land, hydro = [donor / n for n in restart_names(datetime(1986, 1, 1))]
     with nc.Dataset(land, "w") as ds:
@@ -143,7 +147,7 @@ def test_initialization_preserves_counter_and_physics(tmp_path):
         ds.his_out_counts = 43820
         for name in ("hlink", "qlink1", "qlink2", "z_gwsubbas"):
             ds.createVariable(name, "f4", ("links",))[:] = [1, 2]
-    targets = initialization(tmp_path, tmp_path / "init")
+    targets = initialization(tmp_path, tmp_path / "init", **options)
     with nc.Dataset(targets[1]) as ds:
         assert ds.his_out_counts == 43820
         assert ds.Restart_Time == "1979-01-02_00:00:00"
@@ -155,11 +159,11 @@ def test_initialization_preserves_counter_and_physics(tmp_path):
         assert ds.Restart_Time == "1986-01-01_00:00:00"
     with nc.Dataset(land) as ds:
         assert ds["ACCPRCP"][0] == 3
-    assert initialization(tmp_path, tmp_path / "init") == targets
+    assert initialization(tmp_path, tmp_path / "init", **options) == targets
     with nc.Dataset(targets[1], "r+") as ds:
         ds.his_out_counts = 0
     with pytest.raises(ValueError, match="Cached initialization"):
-        initialization(tmp_path, tmp_path / "init")
+        initialization(tmp_path, tmp_path / "init", **options)
 
 
 def test_acceptance_requires_continuation(tmp_path, monkeypatch):

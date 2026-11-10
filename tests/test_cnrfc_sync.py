@@ -38,10 +38,11 @@ def test_completed_cycle_followup_scope(cycle, stream, summary, expected):
     calls = []
     state = {'cycle': cycle, 'stream': stream, 'summary_refresh_job_id': summary, 'partition': 'compute'}
     namespace = {'state': state, 'project': root, 'os': SimpleNamespace(environ={'SLURM_JOB_ID': '123'}),
+                     'downstream_after': '345',
                      'submit_cnrfc': lambda *a, **kw: calls.append(kw) or '456'}
     exec(compile(ast.Module(body=block.body, type_ignores=[]), '<followup>', 'exec'), namespace)
-    assert calls == [{'stream': expected, 'frequency': 'all', 'after': summary or '123',
-                         'partition': 'compute', 'account': ''}]
+    assert calls == [{'stream': expected, 'frequency': 'all', 'after': '345',
+                         'partition': 'compute', 'account': '', 'require_success': True}]
     assert state['cnrfc_sync_job_id'] == '456'
 
 
@@ -55,6 +56,8 @@ def test_serialized_submission(tmp_path, monkeypatch):
     assert cnrfc_sync.submit(tmp_path, after='234') == '456'
     assert '--dependency=afterany:123:234' in calls[-1]
     assert (tmp_path / 'forcing/status/cnrfc/submission-456.json').exists()
+    assert cnrfc_sync.submit(tmp_path, after='234', require_success=True) == '456'
+    assert '--dependency=afterok:234,afterany:123' in calls[-1]
 
 
 def test_retro_catchup_does_not_gate_nrt_model(monkeypatch):
@@ -75,11 +78,12 @@ def test_retro_catchup_does_not_gate_nrt_model(monkeypatch):
     state = {'cycle': 'daily', 'stream': 'nrt', 'cnrfc_sync_job_id': '456',
                  'summary_refresh_job_id': '234', 'partition': 'shared-128'}
     namespace = {'state': state, 'project': root, 'os': SimpleNamespace(environ={'SLURM_JOB_ID': '123'}),
+                     'downstream_after': '345',
                      'subprocess': subprocess}
     # Execute the successful model-submission body (not its enclosing exception return).
     exec(compile(ast.Module(body=model.body[:1] + model.body[1].body, type_ignores=[]),
                  '<model-followup>', 'exec'), namespace)
-    assert calls == [['456', '234', '123']]
+    assert calls == [['456', '345', '123']]
     def fail(*args, **kwargs):
         assert kwargs['stream'] == 'retro' and kwargs['after'] == '456'
         raise RuntimeError('simulated historical submission failure')
@@ -87,6 +91,32 @@ def test_retro_catchup_does_not_gate_nrt_model(monkeypatch):
     exec(compile(ast.Module(body=[retro], type_ignores=[]), '<retro-followup>', 'exec'), namespace)
     assert state['cnrfc_model_cycle'] == {'job_id': '777'}
     assert 'simulated' in state['cnrfc_retro_sync_submission_error']
+
+
+def test_forcing_only_cycle_suppresses_all_model_branches(monkeypatch):
+    import subprocess
+
+    from hydro_ops.forcing import subdomain_sync
+    from hydro_ops.wrf_hydro import nrt_schedule
+
+    root = Path(__file__).resolve().parents[1]
+    tree = ast.parse((root/'slurm/converge_nwm_forcing_cycle.py').read_text())
+    function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
+    blocks = [n for n in function.body if isinstance(n, ast.If)
+              and ('cnrfc_model_cycle' in ast.unparse(n) or 'subdomain_model_cycles' in ast.unparse(n))]
+    assert len(blocks) == 2
+    monkeypatch.setattr(nrt_schedule, 'submit_if_enabled', lambda *a, **kw: pytest.fail('Model submitted'))
+    monkeypatch.setattr(subdomain_sync, 'submit_daily_branches',
+                        lambda *a, **kw: {'b120': '501', 'ucrb': '502', 'yampa': '503'})
+    state = {'cycle': 'daily', 'stream': 'nrt', 'skip_model_runs': True,
+             'cnrfc_sync_job_id': '456', 'partition': 'shared-128'}
+    namespace = {'state': state, 'project': root, 'downstream_after': '345',
+                 'os': SimpleNamespace(environ={'SLURM_JOB_ID': '123'}), 'subprocess': subprocess}
+    function.body = blocks
+    exec(compile(ast.Module(body=[function], type_ignores=[]), '<forcing-only>', 'exec'), namespace)
+    namespace['main']()
+    assert 'cnrfc_model_cycle' not in state
+    assert all(v['status'] == 'disabled_for_forcing_cycle_test' for v in state['subdomain_model_cycles'].values())
 
 
 def test_incremental_skip_is_metadata_only(tmp_path, monkeypatch):

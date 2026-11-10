@@ -1,10 +1,12 @@
-from importlib.machinery import SourceFileLoader
+import importlib.util
 from pathlib import Path
 
-module = SourceFileLoader(
+spec = importlib.util.spec_from_file_location(
     "archive_wrf_hydro_outputs_daily",
     str(Path(__file__).parents[1] / "bin" / "archive_wrf_hydro_outputs_daily.py"),
-).load_module()
+)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
 
 
 def test_group_hourly_outputs_excludes_daily_and_restart_files(tmp_path: Path) -> None:

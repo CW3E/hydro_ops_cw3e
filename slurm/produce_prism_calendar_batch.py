@@ -81,7 +81,7 @@ def main() -> int:
     staging.mkdir(parents=True, exist_ok=True)
     check_scratch(scratch)
     new_production = os.environ.get("HYDRO_OPS_RETRO_NEW_PRODUCTION") == "1"
-    calendar_root = scratch / "calendar" / stream if new_production else destination
+    calendar_root = scratch / "calendar" / stream if new_production or stream == 'nrt' else destination
 
     def produce_window(day: date) -> None:
         run(
@@ -146,7 +146,14 @@ def main() -> int:
             project,
         )
         validate_publication(publication, day)
-        if os.environ.get("HYDRO_OPS_REBUILD_STATIC_ENVELOPE") == "1":
+        if stream == 'nrt':
+            from hydro_ops.forcing.nrt_calendar_publication import publish
+            publish(project, publication, destination / publication.relative_to(calendar_root),
+                    baseline, day, scratch,
+                    project / 'forcing/work/nrt-calendar-publication' / os.environ['SLURM_JOB_ID'])
+            publication.unlink()
+            publication.with_name(publication.name+'.manifest.json').unlink(missing_ok=True)
+        if stream != 'nrt' and os.environ.get("HYDRO_OPS_REBUILD_STATIC_ENVELOPE") == "1":
             # Applied after PRISM and v3 active-cell repair, never before either.
             # Freeze recovery metadata before computing the static-mask checksum.
             with Dataset(publication, "r+") as data:
@@ -166,7 +173,7 @@ def main() -> int:
                    if new_production else ["--staged-rebuild"] ),
                 *(['--fast'] if os.environ.get('HYDRO_OPS_BENCH_FAST_MASK') == '1' else []),
             ], project)
-        if new_production:
+        if new_production and stream != 'nrt':
             final = destination / publication.relative_to(calendar_root)
             if not complete(final):
                 raise ValueError(f"Final publication failed strict completion check: {final}")

@@ -25,6 +25,38 @@ def test_nrt_receipt_rejects_stale_identity(tmp_path):
         backfill.audited(path, 'nrt')
 
 
+def test_rain_repair_requires_current_transaction_and_candidate_audit(tmp_path):
+    from hydro_ops.forcing.rain_repair_writer import digest
+    from hydro_ops.forcing.repair_transaction import atomic_json
+    path = tmp_path/'forcing.nc'
+    path.write_bytes(b'corrected')
+    stat = path.stat()
+    ident = {'inode':stat.st_ino,'bytes':stat.st_size,'mtime_ns':stat.st_mtime_ns}
+    candidate = tmp_path/'candidate.json'
+    atomic_json(candidate, {'status':'passed','files':[{'path':'candidate.nc','sha256':'new'}]})
+    plan = tmp_path/'1981-01-01.plan.json'
+    atomic_json(plan, {'candidate':'candidate.nc', 'target':str(path), 'new_sha256':'new',
+                      'audit':str(candidate), 'audit_sha256':digest(candidate)})
+    transaction = tmp_path/'1981-01-01.transaction.json'
+    atomic_json(transaction, {'status':'published','identity':list(ident.values()),
+                             'sha256':'new','plan_sha256':digest(plan)})
+    audit = tmp_path/'1981-01-01.publication.json'
+    evidence = {'status':'published','published_identity':ident,
+                'active_rain_coverage_verified':True, 'outside_envelope_missing':True,
+                'nonrain_compressed_chunks_unchanged':True}
+    atomic_json(audit,evidence)
+    atomic_json(Path(str(path)+'.manifest.json'), {
+        'day':'1981-01-01','verified':True,'rain_repair':evidence,
+        'static_envelope':{'audit':str(audit),'published_identity':ident,
+                           'policy':'nldas2_seven_met_static_envelope_v4',
+                           'valid_outside_mask':0,'file_sha256':'new',
+                           'active_values_unchanged':False}})
+    assert backfill.audited(path) == ident
+    atomic_json(candidate, {'status':'failed','files':[]})
+    with pytest.raises(ValueError, match='rain repair audit'):
+        backfill.audited(path)
+
+
 def test_parallel_year_locks_exclude_overlaps_and_legacy_controller(tmp_path):
     a, b = date(1980, 1, 1), date(1981, 1, 1)
     with backfill.publication_locks(tmp_path, a, a, True):

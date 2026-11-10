@@ -330,20 +330,37 @@ def main() -> int:
             state['status'] = 'hourly_complete_summary_submission_failed'
             write_state(manifest, state)
             return 2
+    # Revision replay follows normal output/summary publication, and downstream
+    # consumers wait for its per-day publication and unchanged-repeat gates.
+    downstream_after = state.get('summary_refresh_job_id') or os.environ.get('SLURM_JOB_ID')
+    if state['cycle'] in ('daily', 'monthly-retro'):
+        from hydro_ops.forcing.revision_schedule import submit as submit_revisions
+        try:
+            state['routine_revision_replay'] = submit_revisions(
+                project, cycle=state['cycle'], stream=state['stream'],
+                partition=state['partition'], account=state.get('account', ''),
+                dependencies=list(dict.fromkeys(filter(None, [
+                    os.environ.get('SLURM_JOB_ID'), state.get('summary_refresh_job_id')]))))
+            downstream_after = state['routine_revision_replay']['replay_job_id']
+            state['status'] = 'normal_publication_complete_revision_replay_submitted'
+        except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+            state.update(status='hourly_complete_revision_submission_failed', revision_submission_error=str(error))
+            write_state(manifest, state)
+            return 2
     from hydro_ops.forcing.cnrfc_sync import submit as submit_cnrfc
     try:
         state['cnrfc_sync_job_id'] = submit_cnrfc(
             project, stream=state['stream'], frequency='all',
-            after=state.get('summary_refresh_job_id') or os.environ.get('SLURM_JOB_ID'),
-            partition=state['partition'], account=state.get('account', ''))
+            after=downstream_after,
+            partition=state['partition'], account=state.get('account', ''), require_success=True)
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         state.update(status='conus_complete_cnrfc_submission_failed', cnrfc_submission_error=str(error))
         write_state(manifest, state)
         return 2
-    if state['stream'] == 'nrt' and state['cycle'] == 'daily':
+    if state['stream'] == 'nrt' and state['cycle'] == 'daily' and not state.get('skip_model_runs', False):
         from hydro_ops.wrf_hydro.nrt_schedule import submit_if_enabled
         try:
-            dependencies = [state['cnrfc_sync_job_id'], state['summary_refresh_job_id']]
+            dependencies = [state['cnrfc_sync_job_id'], downstream_after]
             if os.environ.get('SLURM_JOB_ID'):
                 dependencies.append(os.environ['SLURM_JOB_ID'])
             state['cnrfc_model_cycle'] = submit_if_enabled(project, dependencies)
@@ -356,15 +373,18 @@ def main() -> int:
         try:
             state['subdomain_sync_jobs'] = submit_daily_branches(
                 project, cnrfc_job=state['cnrfc_sync_job_id'],
-                summary_job=state['summary_refresh_job_id'],
+                summary_job=downstream_after,
                 cycle_id=os.environ['SLURM_JOB_ID'],
                 partition=state['partition'], account=state.get('account', ''))
             state['subdomain_model_cycles'] = {}
             for domain in ('b120', 'yampa'):
+                if state.get('skip_model_runs', False):
+                    state['subdomain_model_cycles'][domain] = {'status': 'disabled_for_forcing_cycle_test'}
+                    continue
                 try:
                     state['subdomain_model_cycles'][domain] = submit_if_enabled(
                         project, [state['subdomain_sync_jobs'][domain],
-                                  state['summary_refresh_job_id'], os.environ['SLURM_JOB_ID']],
+                                  downstream_after, os.environ['SLURM_JOB_ID']],
                         domain=domain)
                 except (OSError, ValueError, RuntimeError, KeyError, subprocess.CalledProcessError) as error:
                     state.setdefault('subdomain_model_submission_errors', {})[domain] = str(error)

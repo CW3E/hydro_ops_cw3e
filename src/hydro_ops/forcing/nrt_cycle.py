@@ -397,7 +397,8 @@ class RecentNrt:
             timings.append({"stage": Path(args[0]).name, "seconds": time.monotonic() - started})
         signature = window_signature(d, baselines, prism,
             "early" if (self.as_of.date() - d).days < 30 else "provisional",
-            writer_env["HYDRO_OPS_ARCHIVE_CHUNKS"] + ":" + writer_env["HYDRO_OPS_ARCHIVE_PRESERVE_SOURCE_CHUNKS"])
+            writer_env["HYDRO_OPS_ARCHIVE_CHUNKS"] + ":" + writer_env["HYDRO_OPS_ARCHIVE_PRESERVE_SOURCE_CHUNKS"]
+            + ':' + writer_env.get('HYDRO_OPS_PRISM_STRATEGY', 'legacy'))
         # Include code and all fixed remapping assets, not just weather inputs.
         key = fingerprint({"window": signature, "assets": self.assets,
             "prism_assets": [identity(self.root / p) for p in

@@ -16,6 +16,15 @@ project's ordinary partition. The initial rejected submission started no jobs.
 
 ### Monthly retro gap catch-up
 
+Monthly source refresh now also queues PRISM release changes for **both** Retro
+and NRT, independent of the Retro promotion window. The durable queue is
+`forcing/status/prism-revisions/queue.json`; it tracks ppt, tmin and tmax and
+both intersecting calendar days. As of the NRT rain repair rollout, this is
+**discovery only, with automatic replay disabled**. Do not treat a successful
+monthly job as proof that queued historical NRT revisions have been applied.
+See [repair rollout](prism_rain_repair_rollout.md) for current validation and
+the remaining operational integration gates. Cron remains paused.
+
 Automatic monthly-retro planning retains its normal 45-day window ending
 183 days behind the current UTC date, but first scans published CONUS retro
 hourly filenames from January 1, 1981 to the day before that window. If older
@@ -132,6 +141,13 @@ existing HRRR/GFS fallback. Failures/timeouts are recorded under
 and errors are in `forcing/logs/recent-observations/`. A passed forcing cycle
 therefore does not imply every optional observation source succeeded.
 The daily cycle uses the same extension before its broader refresh/revisions.
+After normal publication and summaries, a separate queue scan and bounded PRISM
+replay job now handle at most two eligible existing NRT dates. Downstream domain
+sync/model jobs depend on replay success. Incomplete monthly context is deferred
+without clearing queue obligations; the six-hourly extension does not drain this
+historical queue. See [routine replay integration](forcing_production_workflow.md#routine-bounded-revision-integration)
+for gates, backlog semantics and the eight-hour worker ceiling. The cron schedule
+and installation are unchanged and remain paused during commissioning.
 New source-hour files are available directly to the existing precipitation
 selector; normal daily source maintenance remains responsible for consolidation.
 

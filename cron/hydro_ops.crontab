@@ -12,13 +12,15 @@ CRON_TZ=UTC
 # NRT at 2.5 hours after each synoptic boundary. Daily replaces six-hourly at 02:30 UTC.
 # All cycles extend latest hours first with required GFS northern fallback.
 # Only daily continues into broader source refresh, revisions, and summaries.
-30 8,14,20 * * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/update_nwm_forcing.py --cycle six-hourly >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/nwm-cycle-six-hourly.log 2>&1
-30 2 * * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/update_nwm_forcing.py --cycle daily >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/nwm-cycle-daily.log 2>&1
+# Forcing-only operations: model hooks remain disabled pending separate authorization.
+30 8,14,20 * * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/update_nwm_forcing.py --cycle six-hourly --skip-model-runs >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/nwm-cycle-six-hourly.log 2>&1
+30 2 * * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/update_nwm_forcing.py --cycle daily --skip-model-runs >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/nwm-cycle-daily.log 2>&1
 
 # Stable retrospective promotion after PRISM's normal mid-month revision cycle. Cleanup is a
 # dependency-gated final stage and never runs inside parallel PRISM workers.
 # Prefer ordinary resources for this non-urgent cycle, not NRTRES.
-0 18 18 * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/update_nwm_forcing.py --cycle monthly-retro >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/nwm-cycle-retro.log 2>&1
+# Paused pending exact-source revision queue reconciliation.
+#0 18 18 * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/update_nwm_forcing.py --cycle monthly-retro --skip-model-runs >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/nwm-cycle-retro.log 2>&1
 
 # Read-only dashboard status every two hours (may coincide with cycle submission). The
 # writer atomically replaces the canonical JSON document, so web readers never see partial JSON.

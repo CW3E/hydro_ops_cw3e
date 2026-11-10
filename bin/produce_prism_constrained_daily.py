@@ -8,6 +8,7 @@ calendar-day collections; the operational publisher is responsible for rechunkin
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -162,11 +163,17 @@ def main() -> int:
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--stream", choices=FORCING_STREAMS)
     parser.add_argument("--precipitation-weights", type=Path)
+    parser.add_argument('--prism-root', type=Path, help='Explicit frozen PRISM input tree for controlled replay/tests')
     parser.add_argument("--work-directory", type=Path)
     parser.add_argument("--revision", choices=("early", "provisional", "stable"), required=True)
     parser.add_argument("--max-iterations", type=int, default=80)
     parser.add_argument("--maximum-unconverged-fraction", type=float, default=0.005)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument('--precipitation-strategy', choices=('legacy', 'support-aware-v1', 'support-aware-v2'),
+                        default=os.environ.get('HYDRO_OPS_PRISM_STRATEGY', 'legacy'))
+    parser.add_argument('--nldas-root', type=Path)
+    parser.add_argument('--active-mask', type=Path)
+    parser.add_argument('--weak-support-threshold', type=float, default=0.05)
     parser.add_argument(
         "--allow-legacy-12utc-output",
         action="store_true",
@@ -187,11 +194,15 @@ def main() -> int:
         validate_stream_output_root(args.output_root, args.stream)
 
     settings = load_settings()
+    if args.precipitation_strategy == 'support-aware-v2':
+        args.nldas_root = args.nldas_root or settings.project_root/'forcing/inputs/nasa/nldas2/fora0125_hourly_v2.0'
+        args.active_mask = args.active_mask or settings.project_root/'nwm/static/operational/nwm.v3.1.6/domain/wrfinput_CONUS_NLDAS2.nc'
+        args.weak_support_threshold = .1
     layout = OperationalLayout.project_defaults()
     valid_times = prism_window(args.day)
     stamp = args.day.strftime("%Y%m%d")
     prism_month = args.day.strftime("%Y/%m")
-    prism_root = settings.prism_data_dir
+    prism_root = args.prism_root or settings.prism_data_dir
     minimum = prism_root / "tmin" / prism_month / f"prism_tmin_us_25m_{stamp}.nc"
     maximum = prism_root / "tmax" / prism_month / f"prism_tmax_us_25m_{stamp}.nc"
     precipitation = prism_root / "ppt" / prism_month / f"prism_ppt_us_25m_{stamp}.nc"
@@ -270,6 +281,12 @@ def main() -> int:
         ]
         if args.force:
             command.append("--force")
+        if args.precipitation_strategy != 'legacy':
+            command.extend(['--precipitation-strategy', args.precipitation_strategy])
+            command.extend(['--weak-support-threshold', str(args.weak_support_threshold)])
+            for flag, value in (('--nldas-root', args.nldas_root), ('--active-mask', args.active_mask)):
+                if value is not None:
+                    command.extend([flag, str(value)])
         completed = subprocess.run(command, check=False)
         if completed.returncode:
             return completed.returncode

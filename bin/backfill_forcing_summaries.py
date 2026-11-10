@@ -34,6 +34,35 @@ def audited(path, stream="retro"):
     audit = json.loads(Path(envelope["audit"]).read_text())
     stat = path.stat()
     identity = {"inode": stat.st_ino, "bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+    if 'rain_repair' in manifest:
+        # Rain changed intentionally. Require the current transaction and candidate
+        # acceptance chain, not the historical all-values-unchanged assertion.
+        publication = Path(envelope['audit'])
+        stamp = manifest['day']
+        transaction = json.loads((publication.parent / f'{stamp}.transaction.json').read_text())
+        plan = json.loads((publication.parent / f'{stamp}.plan.json').read_text())
+        candidate_audit = json.loads(Path(plan['audit']).read_text())
+        from hydro_ops.forcing.rain_repair_writer import digest
+        matched = [r for r in candidate_audit.get('files', [])
+                   if r['path'] == plan['candidate'] and r['sha256'] == plan['new_sha256']]
+        valid = (manifest.get('verified') is True and audit == manifest['rain_repair']
+                 and envelope.get('policy') == 'nldas2_seven_met_static_envelope_v4'
+                 and audit.get('status') == 'published' and audit.get('published_identity') == identity
+                 and envelope.get('published_identity') == identity
+                 and envelope.get('valid_outside_mask') == 0
+                 and audit.get('active_rain_coverage_verified') is True
+                 and audit.get('outside_envelope_missing') is True
+                 and audit.get('nonrain_compressed_chunks_unchanged') is True
+                 and transaction.get('status') == 'published'
+                 and transaction.get('identity') == [stat.st_ino, stat.st_size, stat.st_mtime_ns]
+                 and transaction.get('sha256') == plan['new_sha256'] == envelope['file_sha256']
+                 and Path(plan['target']).resolve() == path.resolve()
+                 and candidate_audit.get('status') == 'passed' and len(matched) == 1
+                 and digest(Path(plan['audit'])) == plan['audit_sha256']
+                 and digest(publication.parent / f'{stamp}.plan.json') == transaction['plan_sha256'])
+        if not valid:
+            raise ValueError(f'Missing/stale/unaccepted rain repair audit: {path}')
+        return identity
     # Historical post-2020 publishers kept the full audit bound to scratch,
     # then recorded a checksum-verified transfer to the permanent inode.
     # Follow that explicit chain; a generic identity mismatch is still rejected.
@@ -81,6 +110,7 @@ def audited(path, stream="retro"):
 def reduce_day(task):
     root, output, day, reducers, names, units, *options = task
     stream = options[0] if options else "retro"
+    replace_stale = options[1] if len(options) > 1 else stream == 'nrt'
     stop = day + timedelta(days=1)
     inputs = [input_path(root, d) for d in (day, stop)]
     identities = [audited(p, stream) for p in inputs]
@@ -94,7 +124,7 @@ def reduce_day(task):
         names,
         units,
         skip_existing=True,
-        replace_stale=stream == "nrt",
+        replace_stale=replace_stale,
         domain="conus",
         stream=stream,
     )
@@ -133,6 +163,8 @@ def main():
     parser.add_argument("--end", type=date.fromisoformat, required=True)
     parser.add_argument("--workers", type=int, choices=(1, 2, 4, 8), default=4)
     parser.add_argument("--stream", choices=("retro", "nrt"), default="retro")
+    parser.add_argument('--replace-stale-retro', action='store_true',
+                        help='Explicitly replace stale summaries after accepted retro repairs')
     parser.add_argument("--complete-months-only", action="store_true",
                         help="Allow partial-month date ranges; publish only fully included months")
     parser.add_argument("--audit-only", action="store_true")
@@ -177,7 +209,8 @@ def main():
         ) as pool:
             for result in pool.map(
                 reduce_day,
-                [(args.input_root, args.output_root, d, reducers, names, units, args.stream) for d in days],
+                [(args.input_root, args.output_root, d, reducers, names, units, args.stream,
+                  args.stream == 'nrt' or args.replace_stale_retro) for d in days],
             ):
                 print(json.dumps(result), flush=True)
         daily_seconds = time.monotonic() - started
@@ -192,7 +225,7 @@ def main():
                 units,
                 from_daily=True,
                 skip_existing=True,
-                replace_stale=args.stream == "nrt",
+                replace_stale=args.stream == "nrt" or args.replace_stale_retro,
                 domain="conus",
                 stream=args.stream,
             )

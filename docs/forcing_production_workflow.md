@@ -1,5 +1,17 @@
 # NWM 1-km meteorological forcing production workflow
 
+## Current operating state (November 10, 2026)
+
+Daily and six-hourly forcing cycles and status reporting are enabled on login1;
+automatic model launches remain suppressed with `--skip-model-runs`. Monthly
+Retro remains paused. See [cron deployment](cron_environment.md) for the verified
+installation and schedules. Thermal repair publication 5232861 and the subsequent
+daily/six-hourly commissioning chains passed. Earlier dated sections below retain
+the investigation and submission history: statements such as "cron remains
+paused" or "candidate only" describe that point in time, not current operations.
+Acceptance reports and current source signatures still govern each publication;
+this overview does not clear unresolved revision obligations or authorize cleanup.
+
 ## Operational time and daily-summary convention
 
 NWM hourly forcing is stored in UTC calendar chunks containing timestamps `00-23`. A 24-hour
@@ -17,6 +29,23 @@ and integrated precipitation samples matched direct calculations from hours 01 t
 `[2026-03-10 00 UTC, 2026-03-11 00 UTC]`.
 
 ## Purpose and scope
+
+### Support-aware PRISM precipitation: history versus current operations
+
+The initially opt-in `support-aware-v1` path was developed to address
+zero/near-zero baseline rainfall and incompatible low-support coastal targets.
+It fits PRISM totals without baseline-ratio caps, selects baseline/NLDAS/uniform
+hourly timing, and separately reports narrowly defined weak coastal targets.
+All declared hard targets must pass the stored-value audit. The existing
+temperature correction and humidity/longwave adjustments remain in the path.
+The original candidate tests were isolated in `forcing/work/`; subsequent
+audited archive repairs and routine NRT integration are recorded in the
+[repair rollout](prism_rain_repair_rollout.md) and the operational revision
+sections below. Do not interpret those early test receipts as current defaults
+or as authorization to rerun historical publication scripts. The standalone
+daily producer retains an explicit strategy switch; use the current coordinated
+workflow rather than assuming every entry point has the same default. Model
+ingestion alone is not scientific acceptance or replacement authorization.
 
 This document defines the production design for complete hourly meteorological forcing on the
 National Water Model (NWM) CONUS 1-km grid. The output contains the eight fields represented by
@@ -1247,6 +1276,881 @@ implemented primitives:
 The WY2023-WY2025 source backfill is still running. Implementation and synthetic/short-window
 testing can continue during the backfill, but calibration claims require a complete audited
 archive.
+
+## Operational PRISM cutover validation (November 6, 2026)
+
+Cron remains paused. The repaired archive does not imply that all operational
+entry points have adopted the repair strategy. The coupled window producer now
+accepts `support-aware-v2` (CLI or `HYDRO_OPS_PRISM_STRATEGY`) for controlled tests:
+bounded 200-iteration fitting, the validated conservative fallback, and optional
+NLDAS timing (baseline → NLDAS → uniform). It retains the existing coupled
+temperature/humidity/longwave corrections. Unselected jobs retain their existing
+strategy until acceptance. NRT window-cache signatures include the strategy, so
+legacy windows cannot satisfy a v2 cache lookup.
+
+The adapter may write only beneath project `forcing/work/` or the current SLURM
+job's scratch directory; it cannot write directly to production streams. The
+integration test freezes PRISM inputs, assembles 00–23 UTC files, applies and
+fully verifies the static envelope for all eight fields, reduces an interval-end
+daily summary, and subsets parent-first to all four domains. Live production
+files and revision acknowledgements are untouched.
+
+Jobs **5188418** (October 25–26 NRT, 76m50s) and **5188419** (April 12–13
+stable Retro, 69m16s) passed this path. Five PRISM windows were accepted strictly;
+October 27 used the accepted bounded fallback. Reports:
+`forcing/work/operational-prism-revision/<job>/`.
+These are integration tests, not whole daily/monthly cron-cycle acceptance.
+Tests at submission: 702 passed, four skipped.
+
+Stage two uses `slurm/test_operational_prism_revision.sh --case monthly
+--full-month-nrt`: stable April PRISM revises two isolated NRT calendar days,
+rebuilds all three affected interval-end daily summaries (including the preceding
+day), recomputes the complete April monthly summary using unchanged canonical
+daily records for the other days, and propagates changed hourly/daily/monthly
+files to all four domains. Unchanged context is linked read-only; production is
+not modified. Repeat summary/subset calls must skip without rewriting. Isolated
+acknowledgement tests reject incomplete and superseded work, and accept only
+exact-source completed work. This is a monthly revision propagation test, not
+a rebuild of all April hours or acceptance of the live cron/replay executor.
+April NRT provides a complete month and retained baselines; March Retro baseline
+rebuilding remains a separate future gate.
+Stage-two job **5188554** was submitted with 64 CPUs, 120 GB requested scratch,
+and a four-hour limit after 712 tests passed (four skipped). Its acceptance report
+is `forcing/work/operational-prism-revision/5188554/acceptance.json`.
+It passed in 1h13m41s: three affected interval-end days, the complete April
+monthly summary, and all four domains were produced in isolation. Monthly and
+all 24 subset repeat calls skipped unchanged outputs; exact-source/incomplete/
+superseded acknowledgement checks passed. No chunk-layout fallback was logged.
+
+The next missing-baseline gate is `slurm/test_prism_replay_baseline.sh`.
+It regenerates March 11–13, 2026 using the existing native-source baseline
+engine, into `forcing/work/operational-prism-replay/JOB/`, never the live baseline
+archive. Each day deliberately raises an exception after an accepted baseline
+write; retry must reuse that exact file, then the durable stage checkpoint must
+skip a second retry. Source signatures and artifact identities are pinned, and
+changed signatures/artifacts fail closed. This is an injected interruption test,
+not a SLURM/node-failure test or complete live revision replay acceptance.
+`prism_replay_execution.run_stage` provides the isolated checkpoint primitive;
+it does not acknowledge the live queue or enable publication. Baseline rebuilding
+must pass before connecting these stages to complete PRISM/summary/subset replay.
+Job **5190262** runs this gate with 64 CPUs, 120 GB requested scratch, and a
+six-hour limit. Tests before submission: 719 passed, four skipped. Its report is
+`forcing/work/operational-prism-replay/5190262/acceptance.json`.
+
+The v2 timing diagnostic now uses the RAINRATE chunk layout rather than fixed
+128×128 spatial chunks. Stage-one 256×256 coupled windows had fallen back to
+decoded calendar assembly because of that diagnostic mismatch. Unit tests cover
+matching chunks for both ordinary and compact v2 output; stage-two logs provide
+the production-scale check. No numeric algorithm is changed by this adjustment.
+
+Monthly revision discovery now also writes immutable replay plans. Each plan
+pins all six PRISM inputs for the two affected windows, records three required
+baseline dates, daily/monthly summary halos, and domain ordering. Missing
+baselines must be rebuilt; already-constrained Retro files must not be substituted
+as unconstrained temperature baselines. Superseded queued signatures block replay.
+The planner does not clear pending work or enable automatic production writes.
+
+Remaining activation gates: integration of
+the final-envelope publisher on every live path; baseline-rebuild/revision replay
+execution with exact-source acknowledgement;
+and end-to-end daily/monthly cycle tests including retries/no-op repeats. Keep
+automatic replay disabled and do not reinstall cron before those gates pass.
+
+### Persistent replay tests (November 6, 2026)
+
+Baseline recovery job **5190262** passed in 53m20s. The next isolated tests are
+**5192523** (April 12 NRT revision) and **5192524** (March 12 Retro revision),
+using `slurm/test_isolated_revision_replay.sh --case daily|monthly`. Each requests
+64 CPUs, 120 GB scratch, and six hours, without NRTRES. The cases can run in
+parallel because all writes are confined to their own workspaces.
+
+Each test rebuilds three baseline days, creates two PRISM windows, assembles one
+00–23 UTC day, and fully verifies its static envelope. It deliberately exits
+after accepted hourly output, then resumes in a fresh process to create both
+affected interval-end daily summaries, the complete monthly summary, and all
+four subdomain products. Only then may its **isolated** revision queue be
+acknowledged against the exact pinned source signatures. A third invocation
+must reuse all accepted stages without rewriting outputs. Reports are under
+`forcing/work/isolated-revision-replay/JOB/`: `interruption.json`,
+`acceptance.json`, `noop.json`, and `stages.json`.
+
+These tests snapshot already-downloaded PRISM inputs; they do not exercise live
+network acquisition, the newest HRRR/GFS extension, live publication, or live
+queue acknowledgement. The NRT case uses historical stable PRISM. Unchanged
+monthly context and hourly boundary files are linked read-only. The deliberate
+interruption tests a completed-stage boundary, not arbitrary node loss during
+window creation.
+
+Mocked scheduler tests verify source/baseline/continuation dependency ordering,
+latest-hour-before-revision ordering, same-stream overlap rejection, and
+submission-lock contention. A separate checkpoint test rejects simultaneous
+stage writers. These are not proof of cross-cycle live publication safety.
+Before submission the full suite passed **726 tests, four skipped**; Ruff and
+shell syntax checks passed. Cron and automatic live replay remain disabled
+pending the remaining activation gates above.
+
+Both initial replay jobs stopped at the first PRISM window: **5192523** after
+43m55s and **5192524** after 52m06s. All three baseline days in each workspace
+passed, but the test's temporary `windows` path violated the stream-root guard.
+No intentional interruption, downstream summaries, or acknowledgement occurred.
+The harness now validates `windows/<stream>/hourly` and
+`calendar/<stream>/hourly` before expensive processing. `--resume-job JOB`
+reuses an existing isolated checkpoint while scratch follows the new SLURM job;
+changed pinned sources/artifacts still fail closed. Resume IDs cannot escape
+the isolated workspace root.
+
+Retries **5194799** (NRT, `--resume-job 5192523`) and **5194800** (Retro,
+`--resume-job 5192524`) retain the same resources and test stages. Accepted
+baseline identities and pinned context were rechecked unchanged before
+submission. Reports remain in the original workspaces; retry logs use the new
+job IDs. Sixteen focused regression tests, Ruff, shell syntax, and diff checks
+passed. These retries are submitted, not yet accepted.
+
+The retries subsequently **passed**: 5194799 in 1h00m56s and 5194800 in
+59m01s, excluding earlier baseline rebuilding. Both accepted all 13 stages,
+resumed after the intentional hourly-stage interruption, acknowledged only their
+isolated queues after downstream success, and repeated without data rewrites.
+
+### Bounded live publication bridge
+
+`bin/publish_bounded_prism_replay.py` promotes an already accepted isolated
+replay, not arbitrary files. It requires explicit `--workspace`, `--stream`, and
+`--day`. Its default is a read-only preflight, for example:
+
+```bash
+source bin/project_environment.sh
+"$HYDRO_OPS_PYTHON" bin/publish_bounded_prism_replay.py \
+  --workspace forcing/work/isolated-revision-replay/5192523 \
+  --stream nrt --day 2026-04-12
+```
+
+The initial bridge deliberately supports one **existing** calendar day away
+from month boundaries, two affected interval-end daily summaries, and one
+complete month. It verifies all accepted stage identities, successful unchanged
+repeat, six current PRISM signatures, unchanged context, and exactly 20 regular
+production destinations across CONUS and the four subdomains. Both accepted
+NRT/Retro workspaces passed this preflight. It does not refresh sources, build
+new candidates, extend the latest hour, or enable automatic revision discovery.
+
+Explicit `--publish` additionally requires SLURM. The entry point is
+`slurm/publish_bounded_prism_replay.sh`; it forwards arguments without adding
+`--publish` and repeats the invocation to verify the unchanged path. Publication
+holds coordinator/NRT-cycle/rain/month/subset locks and retains hard-linked
+original data and metadata under the replay's `publication/originals/`.
+The hourly transfer uses checksum-verified recoverable intent. Summaries are
+reduced from **canonical published inputs**, rather than copying isolated
+summaries with private source paths; subsets are then rebuilt parent-first with
+canonical source receipts. The CONUS manifest/NRT receipt describes the coupled
+replay (not a rain-only repair) and marks downstream work pending until complete.
+
+Only after all downstream stages and a final source check can the publisher
+acknowledge an existing live queue event whose signatures exactly match the
+accepted inputs. It does not invent events or acknowledge unrelated days.
+An accepted repeat verifies recorded output identities and makes no writes.
+Changed inputs or destinations fail closed. A downstream interruption normally
+resumes from recorded progress; a crash between replacing a downstream file and
+recording its identity deliberately requires inspection, not blind overwrite.
+
+This is **not a multi-file atomic transaction**. Keep cron and consumers of the
+selected dates paused until `publication/acceptance.json` reports `passed`.
+Individual files are atomically replaced, but files may represent mixed revision
+generations while a transaction is incomplete. Existing legacy writers/readers
+are not universally transaction-aware. No automatic daily/monthly coordinator
+cutover is made by adding this bridge. Real-data live-publication acceptance
+remains the next gate before connecting it to routine cycles.
+
+Live canaries were submitted on November 7, 2026: **5202214** publishes NRT
+April 12 from replay workspace 5192523; **5202241** publishes Retro March 12
+from workspace 5192524 with `afterok:5202214`. They are serialized because the
+publisher holds shared operational lock paths exclusively. Both request 64 CPUs,
+120 GB scratch and a four-hour limit on shared-128, without NRTRES. SLURM
+records 125 GiB requested memory through the CPU allocation; allocation still
+needs checking when execution starts.
+
+Preflight verified the accepted artifacts, 20 existing destinations per test,
+passed subset receipts, and matching pending live revision events. Eighteen
+focused tests passed. Installed cron entries on login1 remain commented out;
+the active UCRB model run is in 2016, outside these 2026 targets. Each job runs
+publication followed by an unchanged repeat. Acceptance lives at
+`forcing/work/isolated-revision-replay/<original-workspace>/publication/acceptance.json`;
+logs are `forcing/logs/bounded-prism-publication-<new-job>.out`.
+Submission is not acceptance: inspect both the publication report and the
+unchanged-repeat log before enabling any routine cycles. These tests exercise
+live publication/acknowledgement, not live acquisition or newest-hour extension.
+
+Both live canaries passed: **5202214** in 14m07s and **5202241** in 13m56s.
+Each published all 20 data products, acknowledged its matching live queue event,
+retained originals and completed an unchanged repeat. Published artifact
+identities were rechecked. These timings exclude baseline/window rebuilding.
+
+### Coordinator canaries and newest-hour acquisition
+
+The coordinator now supports an explicit bounded canary branch:
+`--cycle daily|monthly-retro --replay-workspace PATH --replay-day YYYY-MM-DD`.
+`--dry-run` only validates/plans; without it, exactly one bounded publisher job
+is submitted. `--replay-after JOB` serializes canaries using `afterok`. This
+branch runs under the coordinator submission lock, obeys existing stream
+overlap checks, and does **not** launch broad catch-up, source refresh, model
+jobs or the ordinary daily revision continuation. Automatic routine-cycle
+cutover remains disabled. Replaying already-published accepted workspaces tests
+the real cron environment/submission path and unchanged publication, not fresh
+revision discovery.
+
+`slurm/test_latest_acquisition.sh` tests the operational `run_latest_nrt.py`
+loop with real source acquisition. It freezes a date at execution (UTC now
+minus three hours), then processes at most 00–05 UTC on that date, plus the
+five preceding HRRR boundary hours required by the existing acquisition loop.
+The runner acquires HRRR and available Stage-IV/MRMS inputs normally and requires
+GFS northern fallback to have executed before accepting the test. It uses the
+normal acquisition/cycle lock and canonical source cache, but directs baselines,
+forcing, and status reports to `forcing/work/latest-acquisition-test/JOB/`.
+No canonical forcing or latest-extension status is overwritten. A bounded
+repeat must preserve the accepted output identity. Missing all usable hours or
+failure to exercise GFS is a failed test, not a successful no-op.
+
+The isolated runner arguments (`--test-workspace`, `--test-day`,
+`--test-end-hour`) must be supplied together; paths outside `forcing/work`,
+invalid hour limits, future dates, and mismatched existing test output are
+rejected. Normal no-argument operations retain their existing publication roots
+and catch-up behavior. This acquisition test is **not** a daily/monthly summary
+test, live forcing extension, or validation of the unrestricted backlog cycle.
+
+November 7 submissions: **5203262** is the daily bounded coordinator canary;
+**5203263** is monthly-retro with `afterok:5203262`; **5203264** is the isolated
+newest-hour acquisition test with `afterok:5203263`. The coordinator submissions
+used `env -i PATH=/usr/bin:/bin /usr/bin/bash bin/run_cron.sh ...` on login1.
+Each coordinator canary requests 64 CPUs/120 GB scratch/four hours on shared-128
+and should find its already-published outputs unchanged. Acquisition requests
+128 CPUs/240 GB scratch/three hours on compute-128. The initial acquisition
+submission on shared-128 was rejected by its per-job CPU limit (no job created);
+the script now defaults to compute-128. No NRTRES reservation is used.
+The full suite passed 752 tests, four skipped, before submission. Cron stays
+paused. Inspect job-specific reports and logs before treating these submissions
+as acceptance; broad routine replay remains a separate activation gate.
+
+All three subsequently passed: coordinator canaries 5203262/5203263 each took
+four seconds and reported unchanged publication. Acquisition test 5203264 took
+9m54s, produced November 7 00–05 UTC with six HRRR/GFS hours, successfully
+refreshed MRMS/Stage-IV, and repeated unchanged in about two seconds. Canonical
+source caches were updated, but production forcing was not extended.
+
+### Bounded real-queue batch and month-boundary commissioning
+
+`bin/run_bounded_revision_queue.py --stream nrt|retro --start DATE --end DATE`
+selects at most two pending events in an explicit window of at most seven days.
+The default only plans. `--execute` builds accepted isolated candidates and
+checks unchanged repeats; additional `--publish` is required to invoke the
+bounded live publisher. Each event is rechecked before execution and missing
+or superseded PRISM inputs block it. A batch lock serializes these controllers;
+publication retains its own operational locks and exact-source acknowledgement.
+Processing is chronological, and in publish mode each day's downstream work
+finishes before building the next day's context. No cron changes or unrestricted
+backlog submissions are implicit.
+
+The replay harness now accepts an explicit `--day` and numeric `--workspace-id`.
+For a day on the first of a month it pins context for both affected months,
+produces the preceding day's summary and current day's summary, and reduces
+both months. The publisher likewise requires both accepted monthly stages,
+locks both months and updates **25 data products** rather than 20. Existing
+single-month checkpoint formats remain compatible. This extends the earlier
+month-boundary exclusion in the initial bridge; production acceptance of the
+new boundary path passed in the live publication trial below.
+
+Job **5203609**, 64 CPUs/120 GB scratch/eight hours, tests the pending NRT
+**April 30–May 1, 2026** pair with `--execute` only. April/May have complete
+canonical daily context. March 31–April 1 was rejected as a test choice because
+the NRT archive lacks March 1 daily context. Both selected dates have current
+PRISM signatures and existing baseline coverage; the harness nevertheless
+rebuilds isolated baselines for this commissioning run. Results are recorded in
+`forcing/work/bounded-revision-queue/5203609/acceptance.json`, with per-day
+workspaces `forcing/work/isolated-revision-replay/520360901` and `520360902`.
+No production forcing or live queue acknowledgement is authorized by this
+candidate-only job. Full suite: 756 passed, four skipped; Ruff/shell/diff checks
+passed. Cron remains paused; model-history refresh is deferred while forcing
+operations are commissioned.
+
+### Revision queue reconciliation before historical replay
+
+Queue discovery marks both changed and previously untracked PRISM sources as
+pending. A pending day is not proof of obsolete forcing, and `needs_baseline`
+in a replay plan describes execution requirements, not scientific necessity.
+Historical precipitation-only repair receipts do not establish temperature
+source freshness, but must be reconciled before repeating rainfall repairs.
+
+`bin/reconcile_prism_revision_records.py --output REPORT.json` inventories queued
+days against current hourly publication identities, accepted rain-repair records,
+and available exact source pins. It is read-only with respect to production and
+the queue. It never acknowledges obligations or implies downstream/payload
+acceptance. Missing version evidence remains unresolved, not a confirmed change.
+
+The November 8 local-date inventory is saved at
+`forcing/work/revision-backlog-audit/reconciliation-20261108.json` (UTC November 9).
+All 200 queued Retro days had accepted rainfall-repair records matching current
+publication identities, but their older receipts lacked exact PRISM source-version
+pins. Of 241 pending NRT days, 228 matched every queued rainfall source to prior
+accepted repair pins. Temperature obligations remained unresolved. Running NRT
+replay 5219540 selected March 4–5, two such rainfall-current days; no Retro replay
+was running. This inventory does not establish that the entire coupled replay is
+unnecessary. Review temperature provenance before authorizing further broad
+historical replay; no queue entries or jobs were changed by the reconciliation.
+
+Following user approval, backlog job **5219540** was canceled after 43m40s,
+while building isolated baseline candidates, before publication. Its March 4–5
+queue obligations and earlier accepted publications remain intact. Campaign
+`nrt-commissioning-20261108/PAUSED.json` blocks new invocations and successor
+submission after a running batch finishes. Removing that guard requires an
+explicitly reviewed restart; no cron or unrelated model/observation jobs changed.
+
+The follow-up metadata report
+`forcing/work/revision-backlog-audit/reconciliation-temperature-20261108.json`
+found current temperature releases later than the retained original build date
+for at least one window on 22 queued Retro days and 187 NRT days. On 178 Retro
+days the releases were not later than the build, while 54 NRT days lacked usable
+build chronology. These are investigation priorities, not content comparisons:
+neither chronology nor absent provenance authorizes queue acknowledgement or
+automatically proves that numerical fields need rebuilding. Rain-only repair
+publication dates must not be mistaken for temperature rebuild dates.
+
+Read-only numerical follow-up **5220132** runs seven diagnostic windows with
+two concurrent 64-CPU tasks (120 GB requested scratch per task): March 2,
+March 5, April 12, December 15 (2025), September 15, October 25, and April 5
+(otherwise 2026). The April 5 NRT window is a recently coupled-replayed control.
+`bin/audit_prism_temperature_midpoint.py` remaps current PRISM Tmin/Tmax using
+the existing elevation-aware operator and compares their midpoint with the
+archived T2D extrema over the exact preceding-12 UTC through current-11 UTC
+window. The affine correction preserves this midpoint even when range scaling
+is clipped or the baseline range is small. It reads existing forcing without
+rebuilding baselines or writing production. Reports are under
+`forcing/work/temperature-reconciliation/<task-job-id>/report.json`.
+
+Midpoint disagreement establishes numerical inconsistency with the current
+target, not whether a changed release, prior processing, or gap filling caused
+it. Midpoint agreement alone cannot certify the range, hourly curve, Q2D or
+LWDOWN. The diagnostic does not clear queue entries or authorize model reruns;
+source and forcing identities are checked for changes during each comparison.
+
+Initial numerical results found mismatches for Retro March 2 (maximum 2.91 K)
+and April 12 (4.75 K), and NRT March 5 (3.04 K), April 12 (2.90 K), and
+September 15 (4.84 K). These are differences in the min/max midpoint, not
+differences at an individual hour. Retro March 5 and December 15 and NRT
+March 2 and October 25 matched to about 0.0000153 K. Thus neither blanket
+replay nor blanket queue dismissal is supported.
+
+Read-only array **5220139** extends the diagnostic to all 401 distinct PRISM
+temperature windows referenced by the frozen queue, two 64-CPU tasks at a time.
+Its plan and submission record are under
+`forcing/work/temperature-reconciliation/scan-20261109T011704Z/`.
+`bin/submit_prism_temperature_reconciliation.py` freezes the queue snapshot and
+submits only diagnostic jobs; it never changes forcing or acknowledges revisions.
+The historical replay campaign remains explicitly paused pending the results.
+
+### Targeted thermal-only refresh commissioning
+
+All 401 tasks in diagnostic array 5220139 completed. The frozen refresh plan at
+`forcing/work/temperature-refresh/refresh-plan-5220139.json` selects 23 Retro
+constraint windows affecting 26 calendar-day files, and 210 NRT windows affecting
+215 calendar-day files. Window-to-calendar mapping must include both halves;
+adjacent windows must be assembled into a single writer per calendar file.
+The plan is not publication authorization independent of the acceptance gates.
+
+Candidate-only job **5221714** tests the April 12 window for both streams,
+preserving the original April 11–12 collections by hard link. The new
+`bin/trial_temperature_only_refresh.py` obtains fresh baseline temperatures and
+uses the established PRISM affine constraint instead of reapplying that affine
+map to already-constrained temperatures. It then reconstructs Q2D and LWDOWN
+from each archived hour's relative humidity and longwave emission multiplier,
+using the existing physical formulas. Only T2D/Q2D/LWDOWN are overwritten in
+isolated copies. PSFC, rainfall, wind, shortwave, timing/QC and other datasets
+must pass exact unchanged-payload checks; untouched hours of the three thermal
+variables are also checked exactly. Active coverage and the retained static
+envelope are enforced. PRISM and original-file identities are pinned.
+
+This trial requests 64 CPUs, 120 GB scratch and four hours. Its acceptance report
+is `forcing/work/temperature-refresh/5221714/acceptance.json`. Candidate success
+does not publish production, update receipts, acknowledge the revision queue,
+regenerate summaries/subsets or restart models. Those are subsequent required
+steps before declaring the refresh complete. Before Retro publication, coordinate
+the pending CNRFC 2026 run's pinned inputs; earlier active model years are not
+affected. Preserve the precipitation-repair provenance when adding the new
+temperature source-version records.
+
+Trial **5221714** passed candidate acceptance in 44m18s (64 allocated CPUs,
+about 20 GiB peak memory). Four candidates retained all nonthermal payloads and
+untouched thermal hours exactly; production remained unchanged at this stage.
+
+`bin/publish_temperature_refresh_trial.py` now provides the bounded publication
+test for that accepted workspace. It holds the established global/month/domain
+publication locks, snapshots all affected production files and sidecars, checks
+candidate hashes and pinned PRISM sources, and uses recoverable per-file atomic
+replacement transactions. It refreshes three potentially affected daily summaries
+per stream (April 10–12), April monthly summaries, and all four child domains
+for hourly/daily/monthly resolution. Summary nonthermal values, including
+RAINRATE, must remain exactly equal. The explicit repeat invocation verifies a
+no-op using published file and sidecar identities. Queue entries remain pending:
+one refreshed constraint window does not settle both windows and all three PRISM
+elements behind a calendar-day obligation.
+
+CNRFC 2026 model job **5202844** was explicitly placed on hold before this
+publication test. Its dependency on 2025 is retained; earlier years continue.
+The publisher requires that hold, and the model acceptance reader recognizes
+thermal-only replacements only after complete downstream publication, preserved
+rainfall, and exact current identities are recorded. Refresh the 2026 preflight
+pins after the planned Retro replacements settle before releasing the model job.
+Do not interpret accepted candidate generation or successful hourly replacement
+alone as completed downstream publication.
+
+Publication/no-op test **5221920** was submitted with 64 CPUs, 120 GB scratch,
+and a four-hour limit after **866 tests passed (4 skipped)**. Its durable report
+will be `forcing/work/temperature-refresh/5221714/publication/acceptance.json`;
+the unchanged-repeat proof is `publication/noop-5221920.json` in that workspace.
+Submission is not acceptance; the remaining refresh plan is not launched by
+this test.
+
+Job **5221920** stopped at preflight after 3 seconds, before snapshots or any
+production replacement: Retro April 2026 is incomplete and has no monthly
+product. The publisher now explicitly defers an absent incomplete month, while
+still rejecting an existing monthly file whose daily context is incomplete.
+Retro daily context is missing April 18–30; no partial-month product is invented.
+All planned hourly/daily files and NRT April monthly targets were rechecked.
+Retry **5221940** publishes the same accepted hourly candidates, updates daily
+summaries for both streams, and updates the complete NRT monthly summary and
+corresponding child products. Its repeat proof will be
+`forcing/work/temperature-refresh/5221714/publication/noop-5221940.json`.
+The CNRFC 2026 hold remains in place. Six focused tests passed after this fix.
+
+Publication **5221940 passed** in 46m35s with 64 CPUs. Its 105 published artifact
+identities and unchanged-repeat report passed. Four CONUS hourly files, affected
+daily summaries, the complete NRT April monthly summary and all four domain
+subsets were updated. Retro April monthly remains explicitly deferred.
+
+The remaining thermal refresh uses `bin/submit_temperature_refresh_campaign.py`
+with explicit refresh-plan, accepted pilot-publication and held-model-job inputs.
+It excludes the accepted April 12 window, freezes source/original identities and
+retains hard-linked originals. Ten month-owned candidate tasks cover 22 remaining
+Retro and 209 NRT windows (26 and 215 calendar files). Adjacent windows share one
+calendar writer; an unchanged pilot half remains untouched when its other half
+is refreshed. Baseline days and corrected temperature windows are cached under
+per-date locks and shared across streams. Accepted production precipitation is
+preserved exactly; fresh baseline generation is used only for the temperature curve.
+
+The array permits eight concurrent 64-CPU tasks (512 CPUs requested), each with
+120 GB scratch and a 48-hour limit. A dependent collector verifies every candidate
+hash, scope, pinned input and unchanged production identity before publication.
+Only `afterok` acceptance enables the publisher. Publication requests 64 CPUs and
+uses eight workers for independent summaries/subsets, with daily-before-monthly
+and parent-before-child barriers. Hourly replacement remains transaction-gated;
+all affected hourly files are settled before reductions begin. Each summary and
+subset is generated once, and nonthermal summary values must remain unchanged.
+Failures stop the chain for review; an incomplete array is never partial approval.
+
+Reports live under `forcing/work/temperature-refresh/campaign-<UTC>/`: `plan.json`,
+`batches/`, `acceptance.json`, and `publication/acceptance.json`. Submission,
+candidate acceptance and completed downstream publication are distinct states.
+Neither this campaign nor its repeat check clears revision obligations, removes
+originals, releases the CNRFC 2026 model hold, or re-enables cron. Source-level
+queue reconciliation and refreshed model input pins follow completed publication.
+
+Campaign `campaign-20261109T055015Z` was submitted as candidate array **5223298**,
+acceptance collector **5223299**, and publication **5223300**, with explicit
+`afterok` dependencies. Eight candidate tasks started with 64 CPUs/125 GiB each;
+the two remaining tasks wait for array slots. These are execution/submission
+states, not completed publication. The full suite passed 869 tests (four skips),
+and focused boundary/preservation tests, Ruff, shell syntax and diff checks passed.
+
+### Independent May diagnostic and publication hold
+
+Publication job **5223300** is explicitly user-held pending investigation of the
+widespread temperature mismatch. Candidate generation and its acceptance collector
+may continue; neither is permission to release publication. CNRFC 2026 and cron
+remain paused. File replacement/download timestamps alone do not prove that
+PRISM revisions caused the archived numerical differences.
+
+Read-only diagnostic array **5228688** checks May 3, 10 and 15, 2026. It requests
+three concurrent 64-CPU tasks with two-hour limits and 120 GB scratch each.
+`bin/diagnose_temperature_refresh.py` constructs an independent target by
+interpolating temperatures and elevations separately in double precision, then
+applying the explicit -6.5 K/km correction. It does not invoke the production
+temperature-target builder or affine adjustment function. It checks exact
+timestamps, original/candidate/window midpoints, independent hourly affine
+values, calendar assembly, complete active-cell coverage and immutable inputs.
+The numerical tolerance is 0.001 K; spatial error fields are retained.
+
+Reports/maps are in `forcing/work/temperature-refresh-diagnostics/<task-job>/`.
+Matching current PRISM establishes present consistency, not the cause of the
+old mismatch: identifying source revisions conclusively requires historical
+source values. These jobs cannot publish data or release any hold. Seven focused
+diagnostic tests, Ruff, shell syntax and diff checks passed before submission.
+
+The first diagnostic array completed its calculations but reported mismatches:
+the repaired midpoint maximum errors were below 0.000054 K, while 15,874 missing
+cells were outside the operational active mask. Its broader grid mask incorrectly
+required those cells. NaNs also made the reported zero hourly maximum errors
+unreliable; those zeros must not be interpreted as successful hourly checks.
+
+Diagnostic version 2 uses the static envelope's `active` variable for required
+coverage, tests coverage across all required cells (including cells without PRISM
+targets), and rejects nonfinite values inside each comparison domain. It compares
+candidate/window hours across the full operational mask and independent affine
+values where valid PRISM targets exist. Empty comparison domains also fail closed.
+Rerun array **5228762** checks the same three May windows; nine focused tests,
+including masked values, NaN/Inf rejection and mask selection, passed. Publication
+**5223300 remains held**; no diagnostic can release it automatically.
+
+All three version-2 tasks **5228762** passed in 1m34s–1m39s. Across 10,315,371
+required active cells, original/baseline/window/candidate temperature coverage
+was complete. The independent affine comparison covered 7,350,314 active cells
+with valid PRISM targets; maximum hourly discrepancies were 0.00005888,
+0.00005860 and 0.00005942 K for May 3, 10 and 15. Candidate values matched the
+corrected window exactly across every required active cell/hour. Midpoint maximum
+errors stayed below 0.000054 K. This validates present temperature adjustment and
+calendar assembly for the three cases, not the historical cause of old mismatches
+or all campaign dates. Publication is still held for review.
+
+Read-only array **5228930** investigates the original hourly curves for the same
+three May dates. Retained baseline collections still exist and their creation
+metadata places them on September 20, shortly before the original constrained
+collections. `bin/diagnose_original_temperature_curve.py` compares original versus
+retained baseline, original versus rebuilt baseline, rebuilt versus retained
+baseline, and repaired candidate versus rebuilt baseline as a positive control.
+It fits an independent per-cell affine relation over the exact 24-hour window,
+reports maximum hourly differences, fitted residuals, midpoint shifts and slopes,
+and verifies input identities remain unchanged. Coverage is the operational
+active mask; some of those cells lack PRISM targets and should remain baseline.
+An affine signature demonstrates a compatible adjustment, not the exact old
+PRISM release. Reports are under
+`forcing/work/original-temperature-diagnostics/<task-job>/report.json`.
+Three concurrent 32-CPU diagnostic tasks were submitted after four focused tests,
+Ruff, shell syntax and diff checks passed. Publication remains held.
+
+Array **5228930** completed all three curve diagnostics in 1m22s–1m27s. Original
+versus retained baseline was affine at every operational active cell, with
+maximum fit residuals below 0.000034 K and positive slopes capped at 4. Roughly
+7.35 million cells differed from baseline. Rebuilt and retained baselines agreed
+within 0.001 K at about 99.44% of active cells; this localized baseline difference
+cannot explain the widespread original/current target midpoint mismatch.
+
+Read-only job **5230153** compares the saved original-minus-current target
+midpoint maps across May 3, 10 and 15. It quantifies cross-date correlations,
+per-cell temporal spread and the fraction of squared error represented by a
+fixed spatial component. Separately remapped PRISM terrain tests the specific
+omitted-lapse and doubled-lapse hypotheses. It verifies accepted version-2 report
+hashes and immutable inputs, retains spatial fields, and does not publish or
+release holds. A varying pattern alone would not prove PRISM source revisions.
+Reports are under `forcing/work/temperature-target-comparison/5230153/`.
+Two focused statistical tests, Ruff, shell syntax and diff checks passed.
+
+Job **5230153** completed the cross-date statistics but failed before the terrain
+hypothesis check because raw static terrain did not supply the coordinate
+metadata expected by CDO. Retry **5230154** stages the elevation values with the
+normalized PRISM coordinates already used by target construction; errors now
+retain CDO stderr. The failed job's partial statistics are evidence, not an
+accepted complete diagnostic. Neither job changes production or releases holds.
+
+Retry **5230154** completed successfully in 15 seconds. Across 7,350,314 common
+active cells, cross-date error-map correlations were 0.519–0.576; about 74% of
+cells changed by more than 0.1 K across the three dates. The mean spatial pattern
+represented 69.4% of squared error, so shared geography exists, but a fixed
+additive offset alone does not explain the mismatch. Original midpoint RMS
+errors were 0.302–0.317 K. Correlation with the independently calculated lapse
+correction was approximately zero (−0.0003 to 0.026); omitted/doubled correction
+hypotheses worsened residual RMS to 0.422–0.435 K. These simple elevation-error
+hypotheses are not supported. This does not establish historical PRISM revisions:
+historical source values or field-dependent remapping differences remain possible.
+Evidence is `forcing/work/temperature-target-comparison/5230154/report.json`
+and `target-patterns.nc` in the same directory. Input identities remained intact;
+production publication remains held pending the historical-target investigation.
+
+Additional read-only alignment job **5230167** completed in 49 seconds with
+32 allocated CPUs. It verified the accepted map hashes and pinned diagnostic
+inputs before/after comparison. One-cell shifts in all eight directions and
+four-cell cardinal shifts did not improve agreement: the best shifted RMS
+errors were 0.411, 0.405 and 0.402 K for May 3, 10 and 15, respectively,
+versus approximately 0.317, 0.310 and 0.302 K on the same valid comparison cells.
+Using the preceding/following PRISM date instead produced 2.59–3.39 K RMS error.
+These tests do not support the tested integer-grid or one-day offsets; they do
+not exhaust all possible historical interpolation differences. Evidence:
+`forcing/work/temperature-target-alignment/5230167/report.json`. Two focused
+unit tests passed, including no cyclic grid wrap and same-cell comparisons;
+Ruff and shell syntax checks passed.
+
+The current six May Tmin/Tmax files have source-grid fingerprint
+`2e02e599c92a2569dc6d29a82fb7036a64efe917dec1acaf2169c510b947f26d`, matching
+the August 22 bilinear-weight manifest. Their provider history records October
+22 NetCDF creation and their release sidecars record that release and October
+23 acquisition. This establishes newer source artifacts, not changed values.
+The original September 20 assembly manifests identify temporary scratch window
+files, not immutable historical PRISM inputs. The inspected retained September
+revision-test workspace contains September 14–16 sources, not the May cases.
+No historical May values were recovered from these inspected records. Relevant
+normalization and temperature-target code history predates original production;
+there are no current worktree edits to those modules. Consequently, the original
+cause remains unproven: do not label these differences confirmed PRISM value
+revisions or automatically release publication job **5223300**.
+
+### PRISM source-change evidence
+
+Thermal candidate acceptance **5223299** passed for all 241 files. Publication
+**5223300** failed during initial planning (7 seconds), before creating a plan
+or replacing production data: it assumed that Retro April 18's daily summary
+already existed. That summary cannot yet be created because April 19 00 UTC
+is absent. The publisher now preflights the exact 01–00 UTC timestamps and
+explicitly defers an incomplete day only when no corresponding daily product
+exists in CONUS or any downstream domain. Existing products with missing context
+still fail closed; duplicate/non-hourly timestamps are rejected. Incomplete
+months remain deferred without fabricating partial monthly summaries.
+
+Missing downstream products with complete context may be created; their frozen
+plan records a null original identity rather than attempting a nonexistent
+backup. Existing products retain identity checks, backups and nonthermal-value
+preservation checks. New products use normal validated summary/subsetting paths;
+the final report distinguishes newly created products and deferred dates. A
+changed target set on retry requires explicit review. Sixteen focused thermal
+publication/campaign/transaction tests passed, along with Ruff and diff checks.
+
+Retry **5232861** uses 64 CPUs/eight workers and the same accepted candidates.
+Read-only full-scope preflight found 26 Retro plus 215 NRT hourly files, 25 Retro
+plus 215 NRT daily summaries, and two Retro plus eight NRT monthly summaries
+ready for publication and all four domain subsets. Explicit deferrals are Retro
+April 18 daily, Retro April monthly and NRT November monthly. No ready target
+is currently absent. SLURM rejected a dependency on the aged completed acceptance
+job; after confirming **5223299 COMPLETED 0:0**, the retry was submitted without
+that scheduler dependency. Application-level acceptance and identity gates remain
+mandatory. The campaign's `publication-retry-5232861.json` records the submission;
+this is not yet publication acceptance. CNRFC 2026 and cron remain held/paused.
+
+Read-only historical spot check **5232559** was submitted for Retro May 3, 10
+and 15, 2025 using `audit_independent_temperature_target.py`. It independently
+remaps temperature/elevation in double precision, checks the 24-hour PRISM
+windows against the operational active mask, and records midpoint errors and
+descriptive extrema differences. Missing active-cell values fail the comparison;
+range clipping means individual extrema differences alone are not failures.
+It pins source and forcing identities and writes only diagnostic evidence under
+`forcing/work/independent-temperature-audit/5232559/report.json`. Submission is
+not scientific acceptance and does not alter the authorized 2026 publication.
+
+Following user authorization, the investigative hold on publication **5223300**
+was released on November 9. Its `afterok:5223299` acceptance dependency remains
+unchanged; acceptance itself waits for candidate array **5223298**. Release is
+not publication acceptance: pinned-source, candidate-scope and production-identity
+checks and publication locks remain mandatory. CNRFC 2026 job **5202844** remains
+held and cron remains paused. The historical discrepancy remains unresolved;
+the decision proceeds on the independent validation against current PRISM.
+
+Daily PRISM acquisition now retains a compact `<source-stem>.history.json`
+alongside each normalized source and its existing `.release.json`. Each actual
+download records the previous/new release metadata, whole-file SHA-256,
+decoded-value SHA-256, dimensions, latitude/longitude hashes, units and finite
+cell counts. For compatible grids/units it also records changed finite cells,
+newly finite/missing cells, mean/RMS/maximum absolute change in source units
+(degrees Celsius for temperature, millimeters for precipitation). This separates
+release/encoding/history-attribute changes from actual decoded-value changes.
+Grid or unit changes are explicitly marked incomparable rather than reporting a
+misleading numerical difference. Skipped current releases add no event.
+
+If an existing source cannot be decoded (for example, a truncated NetCDF or a
+missing expected variable), a valid replacement is still allowed. The history
+retains the old byte-level SHA-256 and inspection error, with comparison kind
+`old_grid_unreadable` and `values_changed: null`. This is not a numerical match
+or proof of a provider revision. The new grid must pass normal inspection; failure
+to read the old bytes for hashing still stops replacement. Malformed history or
+release metadata is not silently discarded by this recovery path.
+
+Evidence is atomically saved as `prepared` before source replacement, then marked
+`published` only after the data and release sidecar are installed. An interrupted
+`prepared` event is not proof of publication: compare its recorded hashes with
+the files before resolving it. A stable per-source `.download.lock` serializes
+downloaders; do not delete lock files while a downloader could be using them.
+History is cumulative within one JSON file per source, not one file per release.
+Malformed existing evidence fails closed rather than discarding its history.
+
+This is prospective evidence for daily PRISM acquisition, not a reconstruction
+of old releases or a claim that all providers/monthly PRISM acquisition already
+use it. No full old grids are retained and hashes cannot recover old values.
+The additional comparisons read only the old/new PRISM source grids, not CONUS
+forcing archives; unchanged-source skips do not scan the data values. Source
+history does not change revision selection, authorize downstream publication,
+release existing holds or restart cron.
+
+### Routine bounded revision integration
+
+Candidate test **5203609** passed in 3:02:00. Live publication test **5203912**
+passed in 3:36:55: both dates were published, their immediate unchanged repeats
+made no writes, and both exact-source queue obligations were acknowledged.
+The final, latest-version identity check covered 67 data/metadata artifacts with
+zero mismatches (the second day legitimately superseded shared summaries).
+Originals remain retained. This timing includes isolated baseline reconstruction,
+constraints, summaries, subsets, publication and repeats, not just file transfer.
+
+The routine convergence controller now submits the following dependency chain:
+
+```text
+normal hourly production + summaries
+  -> successful PRISM revision scan
+  -> bounded replay/publication (at most two eligible dates)
+  -> downstream domain synchronization and enabled model cycles
+```
+
+Daily cycles consume NRT obligations; monthly-retro cycles consume Retro
+obligations. Monthly source refresh still discovers changes affecting both
+streams; NRT obligations remain for a daily cycle. Six-hourly latest extension
+does not drain this historical queue. This addition does not replace normal
+recent-source revisions, Retro gap filling or source acquisition.
+
+`bin/run_bounded_revision_queue.py --routine --stream nrt|retro` selects at
+execution time, oldest eligible dates first, with a hard two-date maximum.
+Explicit commissioning dates remain supported separately. A routine invocation
+without `--execute --publish` is a read-only plan. Both routine and explicit
+execution retain candidate acceptance, unchanged-repeat checks, exact-source
+acknowledgement, atomic per-file publication, original retention and locking.
+
+Routine replay currently requires existing target products, adjacent hourly
+files, complete daily context for affected months, and all six PRISM inputs.
+Incomplete context (including a current unfinished month) or unavailable/stale
+PRISM sources is deferred, never silently acknowledged. Normal cycles remain
+responsible for creating missing products. A no-work batch succeeds, but reports
+`pending_remaining` and `backlog_complete` separately; success does not assert
+the historical backlog has been drained. Execution failures stop downstream
+dependencies and retain unacknowledged events for investigation/retry.
+
+Worker requests remain 64 CPUs, 120 GB scratch and eight hours. This conservative
+commissioning cap is not a claim that historical replay fits a one-hour NRT
+latency budget. Catalog scanning is a separate two-CPU job; all dependencies use
+`afterok`, and inherited `SBATCH_RESERVATION` is removed for these submissions.
+Coordinator manifests distinguish normal publication from submitted replay;
+the job-specific replay report is `forcing/work/bounded-revision-queue/JOB/acceptance.json`.
+Scanner `automatic_replay_enabled=false` means the scanner itself never publishes;
+the explicit `replay_policy` identifies the separate bounded consumer.
+
+Cron schedules/installations and model enablement flags are unchanged. Cron
+remains paused pending an integrated routine-path check; this is not authorization
+to launch an unrestricted backlog or refresh historical model runs.
+
+Integration verification: 763 tests passed, four skipped; changed Python files
+passed Ruff, shell entry points passed syntax checks, and `git diff --check`
+passed. A clean-environment `bin/run_cron.sh ... --cycle daily --dry-run` showed
+the latest-hour-first branch plus bounded replay policy without submitting jobs.
+Read-only routine selection found NRT April 2–3 (31 earlier events deferred for
+missing context; 239 pending stream-days total) and Retro September 30–October 1,
+2025 (200 pending stream-days total). These are inspection-time snapshots, not
+published repairs. The next acceptance gate is an integrated live routine run;
+unit/dry-run success does not by itself authorize cron installation.
+
+### Full daily cycle commissioning with model submissions suppressed
+
+`bin/update_nwm_forcing.py --cycle daily --skip-model-runs` uses normal source
+acquisition, latest extension, revisions, summaries and domain synchronization,
+but persists model suppression into the daily continuation manifest and launcher.
+Shared domain model configuration is unchanged. CNRFC, B120 and Yampa automatic
+model submission branches are skipped for this cycle; existing Retro chains are
+unaffected. The flag does not install or enable cron.
+
+The November 8 clean-environment trial submitted latest-hour job **5209456**,
+revision launcher **5209457** and hourly CNRFC catch-up **5209458**. The first job
+stopped in six seconds at the existing seven-day catch-up guard: the latest
+accepted NRT hour was October 31, 19 UTC. No new forcing was produced by that
+job. The blocked revision launcher was canceled, while the independent CNRFC
+catch-up completed in three seconds. This was a failed full-cycle attempt, not
+an acceptance result. A reviewed bounded catch-up is needed before retrying;
+the routine guard remains unchanged and cron remains paused.
+
+The model-suppression change passed the full suite (764 passed, four skipped),
+plus an additional focused test of all model branches (nine tests in that file
+passed). Ruff and diff checks passed. Launcher output is retained at
+`forcing/logs/daily-full-cycle-forcing-only-20261108.log`.
+
+The latest-hour runner now accepts `--catchup-through YYYY-MM-DD` for explicitly
+reviewed catch-up jobs. It resumes the latest accepted contiguous hour, publishes
+only through that completed UTC date, and limits each invocation to seven
+calendar days. The normal routine seven-day age guard is unchanged. Catch-up
+fails if unavailable sources prevent reaching the requested date at 23 UTC,
+so `afterok` successors cannot mistake a partial result for completion. Accepted
+partial progress remains restartable. Isolated test-workspace options cannot be
+combined with this canonical-publication mode. Catch-up jobs must hold the same
+NRT cycle lock and use normal acquisition, GFS fallback and publication checks.
+
+### Calendar PRISM publication receipt repair (November 8 commissioning)
+
+Catch-up jobs 5209579/5209580 passed through November 7 at 23 UTC; latest-hour
+job 5211838 then published through November 8 at 08 UTC. The subsequent daily
+summary job 5214178 failed on October 29 because the calendar PRISM batch
+publisher replaced the hourly file but retained an older, unconstrained NRT
+receipt. A metadata scan identified October 29 and 30 as the two stale receipts.
+This failure correctly blocked summaries, bounded revision replay and domain sync.
+
+`produce_prism_calendar_batch.py` now assembles NRT calendar candidates in job
+scratch and calls `nrt_calendar_publication.publish` after PRISM/domain-repair
+validation. The finalizer takes the shared NRT cycle lock, requires a current
+complete baseline receipt, performs the existing full NRT active-cell audit and
+static-envelope application/readback, verifies inputs remained unchanged, then
+transfers the candidate and writes matching NRT receipt/manifest sidecars.
+It does not reuse the old unconstrained fingerprint or claim the old receipt
+validated the new file. Its explicit calendar-finalizer input fingerprint is
+distinct from normal recent-NRT source selection; a later ordinary cycle may
+rebuild it when comparing inputs. Retro publication is unchanged.
+
+Existing targets and their sidecars are retained before replacement. File and
+sidecars are individually atomic, not a multi-file transaction: readers retain
+their strict identity gates, and a publication interrupted before sidecar
+completion must be recovered rather than treated as accepted.
+
+Repair job **5216895** runs the same finalizer for October 29–30, reusing the
+already reconciled calendar values (no new remapping/PRISM solve). Originals and
+job-specific acceptance evidence are under
+`forcing/work/nrt-calendar-receipt-repair/5216895/`. Summary retry **5216896**
+depends on repair success. Existing revision scan **5214179** was reconnected to
+that retry, preserving revision replay **5214180** and domain-sync jobs
+**5214181–5214185** downstream. Submission details are saved in
+`forcing/work/nrt-calendar-receipt-repair-submission.json`.
+These are submitted recovery jobs, not yet a completed operational acceptance.
+Cron remains paused and model-run suppression remains in effect.
+The full suite passed **811 tests with four skips**, including new tests for
+static-envelope application/current receipt publication and active-hole rejection
+without replacing the original. Ruff, shell syntax and diff checks passed.
+The repair requested 32 CPUs but SLURM allocated a full 128-CPU compute node;
+submission resources and actual allocation are not interchangeable.
+
+### Receipt recovery outcome and remaining queue work (November 8)
+
+Receipt repair **5216895 passed** for October 29–30 (4m41s); summary retry
+**5216896 completed** (15m36s). Revision scan **5214179** and replay **5214180**
+passed; the latter published/acknowledged April 4–5 with complete downstream
+acceptance in 3h35m22s. NRT domain sync jobs **5214181–5214184** passed with zero
+failures, as did CNRFC Retro sync **5214185**. This completed the blocked chain,
+not the historical backlog: 243 NRT and 200 Retro stream-days remained queued.
+
+March NRT revisions were deferred because the archive starts March 2: March 1
+hourly/daily and the complete March monthly summary were absent. Do not fabricate
+a partial March monthly file or silently copy Retro data into NRT. Authorized
+context repair **5217629** uses normal source-aware NRT production for March 1,
+then accepted March daily/monthly reductions and all four domain subsets. It
+checks publication context for March 2 and the March 31/April 1 boundary before
+declaring success. It requests 128 CPUs, 300 GB scratch and eight hours. Per-domain
+subset scratch names allow B120, UCRB and Yampa sync within the same allocation.
+Evidence: `forcing/work/nrt-march-context/5217629/acceptance.json`.
+
+Read-only audit **5217628** classifies every queued event using exact source
+signatures and required hourly/daily/monthly context. Its report is
+`forcing/work/revision-backlog-audit/5217628/acceptance.json`; no queue entries
+are acknowledged by an inventory audit.
+
+After context repair, **5217630** starts the explicit offline NRT backlog campaign
+`forcing/work/revision-backlog-drain/nrt-commissioning-20261108/`. The plan freezes
+the 243 authorized keys and limits work to 128 two-date batches. Each job requests
+64 CPUs, 120 GB scratch and eight hours, invoking the already validated bounded
+replay/publication/no-op/exact-source acknowledgement path. Only a successful
+batch with acknowledged selected keys submits its next `afterok` job. Failures,
+uncertain submissions, new out-of-scope queue obligations, or the batch cap stop
+automatic progression; existing receipts and originals are retained. This is not
+an automatic retry of scientific failures.
+
+If no eligible work remains, `final.json` explicitly distinguishes an empty
+backlog from deferred obligations. Incomplete current-month context and missing
+sources remain pending, never silently accepted. A terminal deferred report does
+not mean all forcing is current. Routine cron retains its two-date cap and remains
+paused; this separate historical campaign can take days at observed replay rates.
+Retro publication is not launched while active model reruns depend on pinned
+Retro files; the read-only audit informs its separate scheduling. Model jobs,
+cron installation and old-file cleanup are unchanged.
 
 ## References
 

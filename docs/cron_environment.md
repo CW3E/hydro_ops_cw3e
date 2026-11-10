@@ -6,6 +6,52 @@ manual installation of the updated schedule on **login1**. This is a user-report
 deployment confirmation, not a cross-host audit. Ensure no duplicate schedule
 remains on login2. Future edits to the saved files still require reinstallation.
 
+## Forcing recommissioning after thermal refresh (November 2026)
+
+On November 10, 2026, after the daily and six-hourly live tests passed, the
+forcing-only daily, six-hourly and status entries were re-enabled on **login1**.
+The installed daily and six-hourly commands explicitly include `--skip-model-runs`;
+automatic model submissions remain disabled. Monthly Retro remains commented out
+pending revision reconciliation. No observation entries were installed or enabled.
+An SSH check confirmed no crontab for `mpan` on login2, and the clean-environment
+wrapper preflight passed on login1. Before/after installed schedules are retained
+in `forcing/status/cron/20261110-before.crontab` and
+`forcing/status/cron/20261110-forcing-only.crontab`. Existing manually submitted
+model campaigns are unaffected by this scheduling change.
+
+`bin/acknowledge_thermal_revision_records.py` reconciles only exact-source queue
+obligations backed by accepted thermal/rain publications and unchanged identities
+for **all** published hourly, summary, subset and metadata artifacts. It defaults
+to a dry-run; `--apply` preserves a complete queue snapshot, acquires the queue
+lock and acknowledges only proven entries. Missing historical source pins remain
+pending; neither numerical spot checks nor a completed SLURM job replace evidence.
+
+The daily live test uses `slurm/test_forcing_cycle_after_model_refresh.sh`, dependent
+on all three NRT refresh jobs. Its Python gate additionally requires all six Retro
+and NRT model publication reports to match the campaign plan. It runs the ordinary
+daily coordinator with `--skip-model-runs`, recording its output under
+`forcing/work/cron-recommissioning/<job>/launch.json`. The launcher completing is
+**not** full-cycle acceptance: review latest-hour publication, the daily revision
+continuation, summaries, bounded replay and all domain subsets before proceeding.
+
+After the complete daily chain passes, run the six-hourly cycle with the same
+model-suppression flag and audit its descendants. Only then restore the forcing
+daily/six-hourly/status entries on login1, checking login2 for duplicates. Preserve
+monthly Retro's pause and existing observation scheduling; do not install the
+entire saved schedule blindly. Automatic model hooks require a separate handoff.
+
+Commissioning status, November 9 (local time): reconciliation acknowledged 202
+NRT stream-days without changing forcing payloads. The retained queue has 39 NRT
+and 200 Retro stream-days, which are unresolved provenance obligations rather than
+proof of bad data. Evidence and the pre-change queue snapshot are under
+`forcing/work/revision-backlog-audit/thermal-ack-applied-20261109*`.
+Daily test launcher **5237789** depended on model refreshes **5237507**, **5237509**
+and **5237511** and checked their accepted publication reports. Its full daily
+chain passed, including summaries, bounded revision replay **5240063**, and all
+four subdomain synchronizations. Six-hourly **5246055** passed in 15m25s,
+publishing through November 10 13 UTC; CNRFC sync **5246056** passed in 37s.
+These results authorized the forcing-only cron restoration described above.
+
 ## User accounts and operational reservation policy
 
 The Unix execution account determines the deployment context:

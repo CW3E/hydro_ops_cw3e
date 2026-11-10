@@ -78,6 +78,14 @@ def simulation_window(year, end_date=None, start_date=None):
 
 
 def publication_roots(root, campaign, stream='retro', domain='cnrfc'):
+    if campaign == 'thermal_refresh_2026_v1':
+        if domain not in ('yampa', 'b120', 'ucrb') or stream not in ('retro', 'nrt'):
+            raise ValueError('Invalid thermal refresh domain/stream')
+        return root/'nwm/outputs'/domain/stream/campaign, root/'nwm/restarts'/domain/stream/campaign
+    if campaign == 'repaired_rain_retro_v1':
+        if stream != 'retro' or domain not in ('cnrfc', 'ucrb', 'b120', 'yampa'):
+            raise ValueError('Invalid repaired retro domain/stream')
+        return root / 'nwm/outputs' / domain / stream, root / 'nwm/restarts' / domain / stream
     if domain != 'cnrfc':
         if (domain in ('cnrfc_hu18_v1', 'yampa', 'b120') and stream == 'nrt'
                 and campaign == 'nrt_continuation_v1'):
@@ -130,13 +138,46 @@ def forcing_identity(path):
 
 def run(root, year, campaign='production_1979_1981_v1', archive_gate=None, end_date=None,
         stream='retro', start_date=None, initial_restart_dir=None, *,
-        cycle_workspace=None, stream_lock=None, forcing_root=None, domain='cnrfc', continuation_end=None):
+        cycle_workspace=None, stream_lock=None, forcing_root=None, domain='cnrfc', continuation_end=None,
+        refresh_workspace=None):
+    refresh = campaign == 'thermal_refresh_2026_v1'
     isolated_nrt = domain in ('cnrfc_hu18_v1', 'yampa', 'b120') and stream == 'nrt'
-    if forcing_root is not None and (stream != 'nrt' or (cycle_workspace is None and not isolated_nrt)):
+    if forcing_root is not None and not refresh and (stream != 'nrt' or (cycle_workspace is None and not isolated_nrt)):
         raise ValueError('Explicit forcing snapshots require staged NRT execution')
     first, end = simulation_window(year, end_date, start_date)
     outputs, restarts = publication_roots(root, campaign, stream, domain)
-    if domain != 'cnrfc':
+    if refresh:
+        if (refresh_workspace is None or stream_lock is None or forcing_root is None
+                or initial_restart_dir is None or archive_gate is None or cycle_workspace is not None):
+            raise ValueError('Thermal refresh requires locked staging, snapshot and initialization')
+        gate = json.loads(archive_gate.read_text())
+        expected_first = datetime(2026, 2, 1) if stream == 'retro' else datetime(2026, 4, 18)
+        expected_end = datetime(2026, 4, 18) if stream == 'retro' else datetime(2026, 11, 8)
+        if (year != 2026 or first != expected_first or end != expected_end
+                or gate.get('status') != 'passed' or gate.get('domain') != domain
+                or gate.get('stream') != stream or gate.get('start') != str(first)
+                or gate.get('end') != str(end) or gate.get('restart_equivalence') != 'passed'
+                or gate.get('forcing_publication_job') != '5232861'):
+            raise ValueError('Invalid bounded thermal refresh gate')
+    elif refresh_workspace is not None:
+        raise ValueError('Refresh workspace requires explicit refresh campaign')
+    if campaign == 'repaired_rain_retro_v1':
+        corrected_extension = (domain in ('b120', 'yampa') and continuation_end is not None
+                               and 2001 <= year <= 2020 and end <= continuation_end)
+        corrected_extension |= (domain in ('ucrb', 'cnrfc') and continuation_end is not None
+                                and 2001 <= year <= 2026
+                                and end <= continuation_end <= datetime(2026, 4, 17))
+        corrected_extension |= (domain in ('yampa', 'b120') and continuation_end is not None
+                                and 2020 <= year <= 2026
+                                and first >= datetime(2020, 12, 31)
+                                and end <= continuation_end <= datetime(2026, 4, 17))
+        if archive_gate is None or initial_restart_dir is None or not (1979 <= year <= 2000 or corrected_extension):
+            raise ValueError('Corrected retro requires explicit initialization and test gate')
+        gate = json.loads(archive_gate.read_text())
+        if (gate.get('status') != 'passed' or gate.get('domain') != domain
+                or gate.get('restart_equivalence') != 'passed'):
+            raise ValueError('Corrected retro startup gate failed')
+    if domain != 'cnrfc' and campaign != 'repaired_rain_retro_v1' and not refresh:
         authorized = year in (1979, 1980) or (
             continuation_end is not None and year >= 1981 and end <= continuation_end)
         if not authorized or archive_gate is None:
@@ -149,7 +190,7 @@ def run(root, year, campaign='production_1979_1981_v1', archive_gate=None, end_d
             raise ValueError('Isolated NRT requires a verified handoff and pinned forcing snapshot')
     if stream == 'nrt' and (start_date is None or end_date is None or initial_restart_dir is None):
         raise ValueError('NRT requires explicit start/end dates and initial restart directory')
-    if stream == 'retro' and (start_date is not None or initial_restart_dir is not None):
+    if stream == 'retro' and campaign != 'repaired_rain_retro_v1' and not refresh and (start_date is not None or initial_restart_dir is not None):
         raise ValueError('Explicit continuation inputs are currently NRT-only')
     if campaign == 'recovery_record_stack_v1' or stream == 'nrt':
         if archive_gate is None:
@@ -160,6 +201,9 @@ def run(root, year, campaign='production_1979_1981_v1', archive_gate=None, end_d
                 or gate.get('archive_policy') != 'explicit_record_stack_v1'):
             raise ValueError('Archive recovery acceptance gate has not passed')
     runs = root / 'nwm/runs' / domain / stream / campaign
+    if refresh:
+        runs = refresh_workspace/'runs'/str(year)
+        outputs, restarts = refresh_workspace/'outputs', refresh_workspace/'restarts'
     if cycle_workspace is not None:
         if stream != 'nrt' or stream_lock is None:
             raise ValueError('Cycle staging requires NRT and the held stream lock')
@@ -192,8 +236,10 @@ def run(root, year, campaign='production_1979_1981_v1', archive_gate=None, end_d
         forcing = (Path(forcing_root) if forcing_root is not None
                    else root / 'forcing/outputs' / domain / stream / 'hourly')
         for begin, stop in months(first, end):
+            partial_corrected = (campaign == 'repaired_rain_retro_v1' and year > 2000
+                                 and (begin.day != 1 or stop.day != 1))
             segment = (begin.strftime('%Y%m%d') + '-' + stop.strftime('%Y%m%d')
-                       if stream == 'nrt' else begin.strftime('%Y%m'))
+                       if stream == 'nrt' or partial_corrected else begin.strftime('%Y%m'))
             logs = runs / segment
             marker = logs / 'accepted.json'
             if marker.exists():
@@ -229,7 +275,7 @@ def run(root, year, campaign='production_1979_1981_v1', archive_gate=None, end_d
                     audit = json.loads(path.with_name(path.name + '.subset.json').read_text())
                     if audit.get('status') != 'passed' or audit.get('missing_active_values') != 0:
                         raise ValueError(f'Forcing audit failed: {path}')
-                    if (stream == 'nrt' or domain != 'cnrfc') and audit.get('output_identity') != identities[path]:
+                    if (stream == 'nrt' or domain != 'cnrfc' or campaign == 'repaired_rain_retro_v1') and audit.get('output_identity') != identities[path]:
                         raise ValueError(f'Stale forcing audit: {path}')
                 report['forcing_identities'] = {str(p): value for p, value in identities.items()}
                 write_json(logs / 'status.json', report)
@@ -273,7 +319,7 @@ def run(root, year, campaign='production_1979_1981_v1', archive_gate=None, end_d
                 report['model_seconds'] = time.monotonic() - model_started
                 if 'The model finished successfully' not in (logs / 'model.log').read_text():
                     raise ValueError('Model completion sentinel missing')
-                if (stream == 'nrt' or domain != 'cnrfc') and any(forcing_identity(p) != value for p, value in identities.items()):
+                if (stream == 'nrt' or domain != 'cnrfc' or campaign == 'repaired_rain_retro_v1') and any(forcing_identity(p) != value for p, value in identities.items()):
                     raise ValueError('NRT forcing changed during simulation; retry with consistent inputs')
                 hourly, daily = validate_outputs(work, begin, stop)
                 channels = daily_channels(work, begin, stop, hourly)
@@ -316,7 +362,9 @@ def run(root, year, campaign='production_1979_1981_v1', archive_gate=None, end_d
             finally:
                 report['elapsed_seconds'] = time.monotonic() - started
                 write_json(logs / 'status.json', report)
-        completion = (f'{first:%Y%m%d}-{end:%Y%m%d}-passed.json' if stream == 'nrt'
+        partial_corrected_year = ((campaign == 'repaired_rain_retro_v1' or refresh) and year > 2000
+                                  and (first != datetime(year, 1, 1) or end != datetime(year+1, 1, 1)))
+        completion = (f'{first:%Y%m%d}-{end:%Y%m%d}-passed.json' if stream == 'nrt' or partial_corrected_year
                       else f'{year}-passed.json')
         write_json(runs / completion, {'passed': True, 'start': first, 'end': end,
                                       'stream': stream, 'restarts': inputs})

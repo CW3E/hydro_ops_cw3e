@@ -110,9 +110,9 @@ def check_active_state(path, active, names):
                 raise ValueError(f"Missing/nonfinite active state {name}: {path}")
 
 
-def initialization(project, destination):
+def initialization(project, destination, *, donor=None):
     date = datetime(1979, 1, 2)
-    donor = project / "nwm/restarts/conus/retro/1986/01"
+    donor = donor if donor is not None else project / "nwm/restarts/conus/retro/1986/01"
     sources = [donor / name for name in restart_names(datetime(1986, 1, 1))]
     targets = [destination / name for name in restart_names(date)]
     marker = destination / "initialization.json"

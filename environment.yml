@@ -15,6 +15,7 @@ dependencies:
   - pandas
   - xarray
   - dask
+  - matplotlib-base
 
   # NetCDF/HDF data formats and calendars
   - netcdf4

@@ -29,6 +29,31 @@ def latest_time_limit() -> str:
     return f"{hours:02d}:{minutes:02d}:00"
 
 
+def bounded_replay(settings, args, stream):
+    """Explicit canary branch: never launch broad catch-up or source refresh."""
+    from publish_bounded_prism_replay import bounded_plan
+    plan = bounded_plan(settings.project_root, args.replay_workspace, stream, args.replay_day)
+    command = ['sbatch', '--parsable', f'--partition={settings.slurm_partition}',
+               f'--job-name=nwm-cycle-{args.cycle}-bounded-replay-{args.replay_day:%Y%m%d}',
+               'slurm/publish_bounded_prism_replay.sh', '--workspace', str(args.replay_workspace.resolve()),
+               '--stream', stream, '--day', str(args.replay_day), '--publish']
+    if settings.slurm_account:
+        command.insert(1, f'--account={settings.slurm_account}')
+    if getattr(args, 'replay_after', None):
+        command.insert(1, f'--dependency=afterok:{args.replay_after}')
+    report = {'status': 'planned', 'cycle': args.cycle, 'day': str(args.replay_day),
+              'stream': stream, 'scope': plan['scope'], 'command': command,
+              'source_refresh': False, 'broad_revision_cycle': False}
+    if not args.dry_run:
+        job = subprocess.check_output(command, cwd=settings.project_root, text=True,
+                                      env={k: v for k, v in os.environ.items()
+                                           if k != 'SBATCH_RESERVATION'}).strip().split(';')[0]
+        report.update(status='submitted', job_id=job)
+        (settings.work_root/f'bounded-cycle-{job}.json').write_text(json.dumps(report, indent=2)+'\n')
+    print(json.dumps(report, indent=2))
+    return 0
+
+
 def cycle_window(cycle: str, today: date) -> tuple[str, date, date, int, int]:
     if cycle == "six-hourly":
         end = today - timedelta(days=2)
@@ -76,9 +101,21 @@ def main() -> int:
         help="use the existing source archive (for explicit historical retro windows)",
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument('--skip-model-runs', action='store_true',
+                        help='Suppress downstream model submissions for this cycle and its continuation')
+    parser.add_argument('--replay-workspace', type=Path, help='Accepted isolated replay for a bounded canary')
+    parser.add_argument('--replay-day', type=date.fromisoformat)
+    parser.add_argument('--replay-after', help='Successful job dependency for this bounded canary only')
     parser.add_argument("--revisions-only", action="store_true",
                         help="Internal daily continuation after latest-hour publication")
     args = parser.parse_args()
+    if bool(args.replay_workspace) != bool(args.replay_day):
+        parser.error('Supply both --replay-workspace and --replay-day')
+    if args.replay_after and (not args.replay_workspace or not args.replay_after.isdecimal()):
+        parser.error('--replay-after requires a bounded replay and numeric job ID')
+    if args.replay_workspace and (args.cycle == 'six-hourly' or args.start or args.end
+                                 or args.skip_source_refresh or args.dependency or args.revisions_only):
+        parser.error('Bounded replay requires daily/monthly-retro without other window options')
     if bool(args.start) != bool(args.end):
         parser.error("--start and --end must be supplied together")
     if args.start and (args.cycle != "monthly-retro" or args.end < args.start):
@@ -119,6 +156,8 @@ def main() -> int:
         ):
             print(f"SKIP active coordinated {stream} workflow ({coordinator_prefix})")
             return 0
+        if args.replay_workspace:
+            return bounded_replay(settings, args, stream)
         nominal_start = start
         backlog = []
         if args.cycle == 'monthly-retro' and not explicit_window:
@@ -138,7 +177,14 @@ def main() -> int:
             "status": "planned" if args.dry_run else "submitting",
             "maximum_attempts": 4,
             "initial_dependency": args.dependency,
+            "skip_model_runs": args.skip_model_runs,
         }
+        if args.cycle in ('daily', 'monthly-retro'):
+            plan['routine_revision_replay'] = {
+                'stream': stream, 'maximum_dates': 2,
+                'after': 'normal publication and summaries',
+                'incomplete_context': 'defer and retain queue obligation',
+                'cron_activation': False}
         if args.cycle == 'monthly-retro':
             plan['nominal_window_start'] = nominal_start.isoformat()
             plan['backlog_scan_enabled'] = not explicit_window
@@ -189,7 +235,8 @@ def main() -> int:
                           f'--dependency=afterok:{job}', '--job-name=nrt-daily-revision-launch',
                           f'--output={settings.log_root}/nrt-daily-revision-launch-%j.out',
                           '--wrap', 'source bin/project_environment.sh; exec ' + shlex.join([
-                              sys.executable, 'bin/update_nwm_forcing.py', '--cycle', 'daily', '--revisions-only'])]
+                              sys.executable, 'bin/update_nwm_forcing.py', '--cycle', 'daily', '--revisions-only',
+                              *(['--skip-model-runs'] if args.skip_model_runs else [])])]
                 if settings.slurm_account:
                     follow.insert(1, f'--account={settings.slurm_account}')
                 plan['revision_launcher_job_id'] = subprocess.check_output(
@@ -250,6 +297,20 @@ def main() -> int:
         if args.skip_source_refresh:
             source_ids = []
         plan["source_job_ids"] = source_ids
+        if args.cycle == 'monthly-retro' and not args.skip_source_refresh:
+            # Source updates also invalidate older NRT outputs. Persist those
+            # obligations independently of this cycle's Retro production gate.
+            queue_command = ['sbatch', '--parsable', '--job-name=prism-release-revision-queue',
+                             f'--partition={settings.slurm_partition}']
+            if settings.slurm_account:
+                queue_command.append(f'--account={settings.slurm_account}')
+            if source_ids:
+                queue_command.append('--dependency=afterany:'+':'.join(source_ids))
+            queue_command.append('slurm/queue_prism_revisions.sh')
+            plan['prism_revision_queue_job_id'] = subprocess.check_output(
+                queue_command, cwd=settings.project_root, text=True,
+                env={k: v for k, v in os.environ.items() if k != 'SBATCH_RESERVATION'}).strip().split(';')[0]
+            plan['prism_revision_replay'] = 'bounded_after_normal_publication'
         baseline_start, baseline_end = start - timedelta(days=1), end + timedelta(days=1)
         if plan.get("recent_nrt_gfs_active"):
             baseline_end = recent_start  # Halo for the older PRISM window only.

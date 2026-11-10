@@ -56,7 +56,23 @@ def main() -> int:
     parser.add_argument("--allow-synthetic-timing", action="store_true")
     parser.add_argument("--maximum-unconverged-fraction", type=float, default=0.005)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument('--precipitation-strategy', choices=('legacy', 'support-aware-v1', 'support-aware-v2'), default='legacy')
+    parser.add_argument('--nldas-root', type=Path)
+    parser.add_argument('--active-mask', type=Path)
+    parser.add_argument('--weak-support-threshold', type=float, default=0.05)
+    parser.add_argument('--bounded-inactive-fallback', action='store_true')
+    parser.add_argument('--direct-fallback', action='store_true')
+    parser.add_argument('--compact-rain-window', action='store_true')
     args = parser.parse_args()
+    if args.precipitation_strategy == 'support-aware-v2':
+        from hydro_ops.forcing.nrt_support_production import run
+        args.direct_fallback = True
+        args.bounded_inactive_fallback = False
+        args.weak_support_threshold = .1
+        return run(args)
+    if args.precipitation_strategy == 'support-aware-v1':
+        from hydro_ops.forcing.prism_support_production import run
+        return run(args)
     hour_indices = [0] * len(args.hours) if args.hour_indices is None else args.hour_indices
     if not 0 <= args.maximum_unconverged_fraction <= 1:
         parser.error("--maximum-unconverged-fraction must be between zero and one")

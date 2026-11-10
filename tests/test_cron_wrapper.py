@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -71,7 +72,11 @@ def test_relocated_wrapper_and_cron_render(tmp_path):
         renderer.render(tmp_path / "bad%path", template)
     current = (ROOT / "cron/hydro_ops.crontab").read_text()
     entries = lambda text: [line for line in text.splitlines() if line and line[0].isdigit()]
-    assert entries(renderer.render(ROOT, template)) == entries(current)
+    # The saved schedule belongs to its deployment site, not necessarily this
+    # checkout (for example, an exported index used for release validation).
+    saved_wrapper = Path(shlex.split(entries(current)[0])[6])
+    assert saved_wrapper.parts[-2:] == ("bin", "run_cron.sh")
+    assert entries(renderer.render(saved_wrapper.parents[1], template)) == entries(current)
 
 
 def test_cron_template_uses_wrapper():
@@ -80,7 +85,9 @@ def test_cron_template_uses_wrapper():
         for line in (ROOT / "cron/hydro_ops.crontab").read_text().splitlines()
         if line and line[0].isdigit()
     ]
-    assert len(entries) == 7
+    # Monthly Retro is deliberately paused during forcing-only recommissioning.
+    assert len(entries) == 6
+    assert not any('--cycle monthly-retro ' in line for line in entries)
     assert any(line.startswith('15 19 * * * ') and 'bin/submit_cdec_swe.py' in line
                for line in entries)
     assert any(line.startswith('0 19 * * * ') and 'bin/submit_cdec_fnf.py' in line
@@ -103,6 +110,12 @@ def test_nrt_cron_utc_schedule():
         assert len(daily) == len(fast) == 1
         assert daily[0].split()[:5] == ["30", "2", "*", "*", "*"]
         assert fast[0].split()[:5] == ["30", "8,14,20", "*", "*", "*"]
+        assert '--skip-model-runs' in daily[0]
+        assert '--skip-model-runs' in fast[0]
+        assert not any('--cycle monthly-retro ' in line for line in entries)
+        paused = [line for line in text.splitlines()
+                  if line.startswith('#0 18 18 ') and '--cycle monthly-retro ' in line]
+        assert len(paused) == 1
 
 
 @pytest.mark.skipif(
