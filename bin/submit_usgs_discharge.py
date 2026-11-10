@@ -5,12 +5,14 @@ import fcntl
 import io
 import json
 import re
+import shutil
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from hydro_ops.download.cdec_fnf import atomic_bytes, write_json
 from hydro_ops.download.usgs_inventory import DOMAINS, sha256
+from hydro_ops.observations.station_operations import active_catalog
 
 
 def main():
@@ -18,8 +20,14 @@ def main():
     parser.add_argument('--selection', type=Path, required=False)
     parser.add_argument('--mapping', type=Path)
     parser.add_argument('--resume-plan', type=Path, help='Retry failed/unstarted shards using accepted caches')
+    parser.add_argument('--backfill-hours', type=int, default=24,
+                        help='SLURM limit for each download shard (1–48 hours; default 24)')
     args = parser.parse_args()
+    if not 1 <= args.backfill_hours <= 48:
+        parser.error('--backfill-hours must be between 1 and 48')
     root = Path(__file__).resolve().parents[1]
+    if active_catalog(root) is not None:
+        parser.error('Legacy USGS campaigns disabled; use bin/submit_station_updates.py --selection usgs')
     status = root / 'observations/status/usgs/discharge'
     status.mkdir(parents=True, exist_ok=True)
     with (status / 'submission.lock').open('a') as lock:
@@ -31,6 +39,12 @@ def main():
             plan_file = args.resume_plan.resolve()
             plan = json.loads(plan_file.read_text())
             state = plan_file.parent
+            # Preserve timeout/partial reports before the retried workers replace them.
+            previous = state / ('prior-reports-' + datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ'))
+            previous.mkdir(exist_ok=False)
+            for name in ['status.json', 'smoke.json', *[f'shard-{i}.json' for i in range(8)]]:
+                if (state / name).is_file():
+                    shutil.copy2(state / name, previous / name)
         else:
             if not args.selection or not args.mapping:
                 parser.error('A new campaign requires --selection and --mapping')
@@ -111,7 +125,7 @@ def main():
             command = ['sbatch', '--parsable', f'--chdir={root}',
                        '--job-name=obs-usgs-discharge-' + stage]
             if stage == 'backfill':
-                command += ['--array=0-7%2', '--time=08:00:00']
+                command += ['--array=0-7%2', f'--time={args.backfill_hours:02d}:00:00']
             if dependency:
                 command += ['--dependency=' + dependency]
             command += ['slurm/download_usgs_discharge.sh', '--plan', str(plan_file), '--stage', stage]

@@ -8,6 +8,8 @@ from pathlib import Path
 
 from hydro_ops.download.cdec_fnf import PST, write_json
 from hydro_ops.download.cdec_swe import digest, series, tasks_for
+from hydro_ops.observations.station_operations import active_catalog
+from hydro_ops.observations.station_submit import submit
 
 
 def main():
@@ -17,6 +19,11 @@ def main():
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
+    if active_catalog(root) is not None:
+        if args.mode != 'update' or args.refresh:
+            parser.error('Legacy backfill/refresh is disabled after station cutover; use a reviewed import')
+        print(json.dumps(submit(root, 'cdec-swe', dry_run=args.dry_run)))
+        return
     status = root / 'observations/status/cdec/swe'
     status.mkdir(parents=True, exist_ok=True)
     with (status / 'submission.lock').open('a') as lock:

@@ -6,6 +6,8 @@ import subprocess
 from pathlib import Path
 
 from hydro_ops.download.cdec_fnf import write_json
+from hydro_ops.observations.station_operations import active_catalog
+from hydro_ops.observations.station_submit import submit
 
 
 def main():
@@ -13,6 +15,9 @@ def main():
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
+    if active_catalog(root) is not None:
+        print(json.dumps(submit(root, 'cdec-fnf', dry_run=args.dry_run)))
+        return
     status = root / 'observations/status/cdec/fnf'
     status.mkdir(parents=True, exist_ok=True)
     with (status / 'submission.lock').open('a') as lock:

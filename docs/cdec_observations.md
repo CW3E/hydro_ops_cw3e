@@ -1,5 +1,11 @@
 # CDEC full-natural-flow station metadata
 
+After the [common station collection](station_collection_operations.md)
+activation gate passes, `bin/submit_cdec_fnf.py` routes updates to that collection.
+Legacy CSV/downloader descriptions below document retained bootstrap data;
+direct legacy writes are disabled. Metadata and provider time semantics remain
+unchanged. Cron installation is separate.
+
 For the separate, station-wide sensor-3/82 SWE inventory, see
 [CDEC SWE observations](cdec_swe_observations.md).
 

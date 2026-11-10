@@ -11,6 +11,7 @@ from pathlib import Path
 import requests
 
 from hydro_ops.download.cdec_fnf import PST, acquire, series_from_metadata, write_json
+from hydro_ops.observations.station_operations import active_catalog
 
 
 def main():
@@ -22,6 +23,8 @@ def main():
     if args.workers not in (1, 2, 3, 4):
         parser.error('Use 1--4 workers')
     root = Path(__file__).resolve().parents[1]
+    if active_catalog(root) is not None:
+        parser.error('Legacy station writer disabled; use bin/submit_cdec_fnf.py for the active collection')
     ids = json.loads((root / 'config/cdec_fnf_stations.json').read_text())['station_ids']
     if len(ids) != 24 or len(set(ids)) != 24:
         raise ValueError('Expected the configured 24 stations')

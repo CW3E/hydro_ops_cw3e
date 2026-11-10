@@ -8,6 +8,7 @@ from pathlib import Path
 from hydro_ops.download.cdec_fnf import atomic_bytes, write_json
 from hydro_ops.download.usgs_discharge import accepted, safe_acquire
 from hydro_ops.download.usgs_inventory import csv_bytes, sha256
+from hydro_ops.observations.station_operations import active_catalog
 
 
 def finalize(root, state, plan):
@@ -55,6 +56,8 @@ def main():
     if not os.environ.get('SLURM_JOB_ID'):
         raise RuntimeError('Use slurm/download_usgs_discharge.sh')
     root = Path(__file__).resolve().parents[1]
+    if active_catalog(root) is not None:
+        parser.error('Legacy USGS writer disabled; use bin/submit_station_updates.py --selection usgs')
     state = args.plan.resolve().parent
     plan = json.loads(args.plan.read_text())
     plan['plan_sha256'] = sha256(args.plan)

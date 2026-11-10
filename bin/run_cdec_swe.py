@@ -9,6 +9,7 @@ from pathlib import Path
 
 from hydro_ops.download.cdec_fnf import write_json
 from hydro_ops.download.cdec_swe import digest, identity, safe_acquire
+from hydro_ops.observations.station_operations import active_catalog
 
 
 def finalize(root, plan, state):
@@ -51,6 +52,8 @@ def main():
     if not os.environ.get('SLURM_JOB_ID'):
         raise RuntimeError('Run SWE processing on a compute node')
     root = Path(__file__).resolve().parents[1]
+    if active_catalog(root) is not None:
+        parser.error('Legacy SWE writer disabled after station cutover; use bin/submit_cdec_swe.py')
     plan = json.loads(args.plan.read_text())
     if digest((root / plan['metadata']).read_bytes()) != plan['metadata_sha256']:
         raise ValueError('Pinned metadata changed')

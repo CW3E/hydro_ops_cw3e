@@ -1,5 +1,11 @@
 # USGS daily streamflow inventory
 
+After the [common station collection](station_collection_operations.md)
+activation gate passes, use `bin/submit_station_updates.py --selection usgs`
+for routine updates. Legacy backfill writers are disabled; the inventory and
+download descriptions below document the retained bootstrap archive. No USGS
+cron schedule is installed by this cutover.
+
 `bin/collect_usgs_streamflow_inventory.py` builds a versioned inventory of
 **USGS daily mean discharge**: parameter `00060`, statistic `00003`, computation
 period `Daily`. Both current and historical records are retained, including
@@ -220,7 +226,8 @@ inputs. The download plan is immutable and checksummed.
 The pipeline submits a live-data smoke gate (samples from all four domains,
 historical/recent/multiple-series cases), then an `afterok` backfill array with
 eight shards and at most **two concurrent tasks**. Each task uses two CPUs on
-ordinary `shared-128` resources; backfill tasks have eight-hour limits, while
+ordinary `shared-128` resources; backfill tasks default to 24-hour limits (the
+initial eight-hour limits proved insufficient), while
 smoke/finalization have two-hour limits. An `afterany` finalizer requires all
 shards and all 7,495 station receipts to pass before publishing complete-cohort
 diagnostics. This is not an NRTRES workflow. Existing model/forcing jobs and cron
@@ -237,11 +244,14 @@ lock and an accepted checksum manifest. One bounded second acquisition attempt
 handles transient failures. A failed campaign can be safely retried with:
 
 ```bash
-"$HYDRO_OPS_PYTHON" bin/submit_usgs_discharge.py --resume-plan observations/status/usgs/discharge/backfill-<timestamp>/plan.json
+"$HYDRO_OPS_PYTHON" bin/submit_usgs_discharge.py --resume-plan observations/status/usgs/discharge/backfill-<timestamp>/plan.json --backfill-hours 24
 ```
 
 Retry refuses a concurrent active download campaign and skips unchanged accepted
-stations. A new/different plan does not overwrite station histories automatically:
+stations. `--backfill-hours` accepts 1–48 hours and changes only the scheduler
+limit, not the pinned request dates, cohort or rate limit. Retry preserves prior
+status/smoke/shard reports in a timestamped `prior-reports-*` directory before
+workers replace them. A new/different plan does not overwrite station histories automatically:
 incremental update/refresh semantics require separate implementation and review.
 
 ### Record and diagnostic semantics
@@ -311,3 +321,20 @@ the full suite passed 567 tests (three skipped), with Ruff, shell syntax and dif
 checks passing. The seven-station gate passed in **32 seconds**, publishing
 79,083 source-verified records; the first two backfill shards then started.
 This is not yet a declaration of complete acquisition or final diagnostics.
+
+### Timeout recovery
+
+All eight original shards reached their eight-hour limits. Their logs recorded
+4,043 distinct accepted stations (52,362,661 rows), with corresponding receipt
+files present; 3,452 stations remained. No station-level errors were logged.
+All selected reporting-domain stations were among those downloaded (CNRFC 469,
+B120 67, UCRB 237, Yampa 18). This is not a fresh checksum audit of those records:
+the finalizer 5051088 rejected the incomplete campaign as intended.
+
+The unchanged plan was resumed with 24-hour shard limits:
+**5077270** smoke/cache gate, **5077271** backfill array, **5077272** final audit.
+Concurrency remains two tasks and request spacing remains five seconds globally.
+Previously accepted histories are revalidated/reused rather than downloaded
+again. Requested provider labels still end on **2026-10-27**; this retry does not
+enable daily updates or extend the original plan's end date. Completion remains
+subject to the final cohort audit.

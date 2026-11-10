@@ -1,5 +1,11 @@
 # CDEC SWE station and sensor metadata
 
+After the [common station collection](station_collection_operations.md)
+activation gate passes, `bin/submit_cdec_swe.py` routes routine updates to it.
+Legacy acquisition/backfill descriptions below document retained bootstrap data;
+direct legacy writes are disabled. Metadata discovery and sensor/time semantics
+remain unchanged. No cron installation is implied by cutover.
+
 This inventory discovers **all stations exposed by CDEC for sensor codes 3 and
 82**, across reporting durations and station status, before acquiring any SWE
 time series. There is no model-domain or geographic filter. The source is the
