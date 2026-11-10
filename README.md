@@ -10,6 +10,12 @@ monthly, daily, hourly and event records with separate daily update scheduling.
 The [USGS daily streamflow inventory](docs/usgs_streamflow_observations.md) uses
 the v1 API and preserves station time-zone metadata, with reporting-region lists
 for CNRFC, B120, UCRB and Yampa.
+The [shared station collection](docs/station_collection_operations.md) implements
+compressed per-station histories, provider adapters, recoverable publication and
+resilient incremental updates for CDEC and USGS. Activation is controlled by
+`observations/status/stations/active.json`; retained legacy archives are recovery
+evidence after cutover, not the current update destination. Future SNOTEL support
+can reuse this framework but is not yet implemented.
 
 Start with the [current workflows and experiment catalog](docs/experiment_catalog.md)
 before reusing test scripts or results. Historical job receipts are not current
@@ -25,6 +31,8 @@ Regional initialization from existing CONUS states is documented in
 CNRFC warm-start test and reach/groundwater indexing rules.
 The canonical split between the forcing and NWM production systems is documented in
 [Forcing and NWM project layout](docs/project_layout.md).
+The [seasonal land-state climatology](docs/nwm_land_climatology.md) documents the
+WY1980–WY2025 soil-water/SWE percentile method and initial CNRFC tile benchmark.
 
 ## Python environment
 
