@@ -1,5 +1,78 @@
 # Seasonal land-state percentile climatology
 
+## UCRB production — November 11, 2026
+
+The streaming extractor, tile worker, publication audit and map preview now
+accept `--domain cnrfc|ucrb`; CNRFC remains the default for the already submitted
+campaign. Domains have separate analysis/status directories, masks, model
+acceptance records and map boundaries. Reports and new NetCDF products record
+their domain; cross-domain history/plan/task mismatches fail acceptance. UCRB
+uses its `ucrb_reporting` boundary layer. No separate B120 or Yampa climatology
+jobs are scheduled; the requested climatologies are those of their parent domains.
+
+UCRB coverage checks found all 16,832 padded daily LDASOUT files and passed
+corrected-rerun acceptance for all 554 source months. The grid is 908 × 641,
+with 335,663 active cells in 31 active 128-cell tiles. Its reference period,
+layer weighting, running windows, quantile method, leap-day treatment and
+SWE rank threshold are identical to CNRFC.
+
+| Job | Stage | Resources / dependency |
+| --- | --- | --- |
+| 5260676 | Fresh UCRB tile histories | 8 CPUs, 120,000 MB scratch, 6 hours |
+| 5260677 | 31 percentile tiles | After extraction passes; 12 CPUs/task, at most 16 concurrent |
+| 5260678 | Complete UCRB publication/source audit | After all tile tasks pass; 2 CPUs |
+| 5260679 | Three UCRB map previews | After audit passes; 3 concurrent tasks, 4 CPUs each |
+
+The UCRB percentile array reserves at most 192 CPUs (one numerical process per
+tile); the independently running CNRFC array retains its 384-CPU ceiling.
+New UCRB products are under `nwm/analysis/ucrb/retro/climatology/` as
+`history-stream-5260676/`, `wy1980-2025/tiles-5260677/` and
+`wy1980-2025/maps-5260679/`. Acceptance reports are under
+`nwm/status/ucrb/climatology/`. Previews use April 1, 2015; April 1, 2023; and
+September 30, 2025. Neither domain's submission establishes scientific acceptance.
+
+## Corrected-rerun recomputation — November 11, 2026
+
+The original histories/tables below were derived from the superseded model runs
+and must not be reused for corrected-run ranks. The corrected canonical CNRFC
+archive has all 16,832 daily files required for the padded reference interval,
+with passed monthly acceptance records for all 554 months. This is a coverage
+and run-acceptance check, not a new content audit of every field.
+
+Extraction and preview source checks now use `repaired_rain_retro_v1`, not
+`hu18_pilot_v1`. Streaming extraction pins the corrected monthly acceptance
+records and soil-layer namelists as well as the daily files and domain mask.
+The final audit rechecks those identities. Model-campaign provenance is carried
+into the histories, percentile tables and full-domain acceptance. Preview maps
+require an explicitly selected corrected table array and matching daily source
+identity; the old array is no longer a default.
+
+| Job | Stage | Resources / dependency |
+| --- | --- | --- |
+| 5260668 | Fresh histories, 1979-09-16 through 2025-10-15 | 8 CPUs, 250,000 MB scratch, 6 hours |
+| 5260669 | 59 percentile tiles | After extraction passes; 12 CPUs/task, at most 32 concurrent, 4 hours |
+| 5260670 | Full tile/publication/source audit | After all percentile tasks pass; 2 CPUs |
+| 5260671 | Three full-domain visual previews | After audit passes; 3 concurrent tasks, 4 CPUs each |
+
+Reference centers remain October 1979–September 2025 (46 water years), with
+31-day running windows, exact type-8 percentiles at 0.5–99.5, weighted column
+soil water, and the existing leap-day/missing/SWE-threshold rules. The 59 active
+128-cell tiles cover 681,063 active cells. Maximum percentile-array allocation
+is 384 CPUs; numerical work remains one process per tile. The previous campaign
+took about 2h22m extraction and 1h17m percentiles, but filesystem/queue conditions
+may differ now.
+
+New products are isolated under `history-stream-5260668/`,
+`wy1980-2025/tiles-5260669/`, and `wy1980-2025/maps-5260671/` within
+`nwm/analysis/cnrfc/retro/climatology/`. Job-specific reports are under the matching
+`nwm/status/cnrfc/climatology/` directories. Old products are retained only as
+superseded comparison evidence; no archive is deleted by this campaign.
+
+Preview dates remain 2015-04-01, 2023-04-01, and 2025-09-30. April 2015 is the
+key visual check for disappearance of the former circular wet features. Corrected
+forcing is reason to expect improvement, not proof that every spatial artifact
+will disappear. Submission alone is not numerical or scientific acceptance.
+
 ## Scope and reference period
 
 This is an offline analysis of accepted daily LDASOUT, not a model or forcing

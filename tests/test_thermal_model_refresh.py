@@ -49,6 +49,46 @@ def test_old_campaign_cannot_use_refresh_workspace(tmp_path,modules):
         runner.run(tmp_path,1979,campaign='repaired_rain_retro_v1',domain='yampa',refresh_workspace=tmp_path)
 
 
+def test_cnrfc_handoff_and_bounds(tmp_path, modules):
+    task, runner = modules
+    handoff = load_script('run_cnrfc_repaired_nrt.py')
+    start, end = task.interval('nrt', 'cnrfc')
+    assert str(start) == '2026-04-17 00:00:00'
+    assert str(end) == '2026-11-11 00:00:00'
+    previous = {'passed': True, 'stream': 'retro', 'start': '2026-01-01 00:00:00',
+                'end': str(start)}
+    handoff.validate_retro(previous)
+    for key, value in [('passed', False), ('stream', 'nrt'), ('end', '2026-04-18 00:00:00')]:
+        with pytest.raises(ValueError, match='terminal acceptance'):
+            handoff.validate_retro(previous | {key: value})
+    proof = {'status': 'complete', 'domain': 'cnrfc', 'stream': 'retro',
+             'end': str(start), 'plan_sha256': 'pin'}
+    task.validate_predecessor(proof, 'cnrfc', 'pin')
+    with pytest.raises(ValueError, match='predecessor'):
+        task.validate_predecessor(proof | {'end': '2026-04-18 00:00:00'}, 'cnrfc', 'pin')
+    with pytest.raises(ValueError, match='existing Retro'):
+        task.interval('retro', 'cnrfc')
+    with pytest.raises(ValueError, match='domain/stream'):
+        runner.publication_roots(tmp_path, task.CAMPAIGN, 'retro', 'cnrfc')
+    assert runner.publication_roots(tmp_path, task.CAMPAIGN, 'nrt', 'cnrfc')[0].name == task.CAMPAIGN
+    gate = tmp_path/'gate.json'
+    gate.write_text(json.dumps({'status': 'passed', 'domain': 'cnrfc', 'stream': 'nrt',
+        'start': str(start), 'end': str(end), 'restart_equivalence': 'passed',
+        'forcing_publication_job': '5232861'}))
+    # Correct interval reaches the separate archive gate; a shifted interval
+    # must fail earlier, even with a matching-looking but unauthorized gate.
+    with pytest.raises(ValueError, match='Archive recovery acceptance'):
+        runner.run(tmp_path, 2026, campaign=task.CAMPAIGN, stream='nrt', domain='cnrfc',
+            start_date='2026-04-17', end_date='2026-11-11', archive_gate=gate,
+            refresh_workspace=tmp_path/'stage', stream_lock=object(),
+            forcing_root=tmp_path/'forcing', initial_restart_dir=tmp_path/'initial')
+    with pytest.raises(ValueError, match='bounded thermal refresh gate'):
+        runner.run(tmp_path, 2026, campaign=task.CAMPAIGN, stream='nrt', domain='cnrfc',
+            start_date='2026-04-18', end_date='2026-11-11', archive_gate=gate,
+            refresh_workspace=tmp_path/'stage', stream_lock=object(),
+            forcing_root=tmp_path/'forcing', initial_restart_dir=tmp_path/'initial')
+
+
 def test_superseded_partial_checkpoint_retired_not_initial(tmp_path,modules):
     task,_ = modules
     from datetime import datetime

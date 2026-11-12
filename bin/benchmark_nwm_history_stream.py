@@ -22,6 +22,25 @@ from hydro_ops.wrf_hydro.production import write_json
 
 FIELDS = ('SOIL_WATER', 'SNEQV')
 UNITS = 'days since 1970-01-01 00:00:00'
+MODEL_CAMPAIGN = 'repaired_rain_retro_v1'
+
+
+def accepted_month(root, month, domain='cnrfc'):
+    """Use corrected-run evidence, never the superseded pilot campaign."""
+    if domain not in ('cnrfc', 'ucrb'):
+        raise ValueError('Unsupported climatology domain')
+    folder = root / f'nwm/runs/{domain}/retro' / MODEL_CAMPAIGN / month
+    receipt = folder/'accepted.json'
+    accepted = json.loads(receipt.read_text())
+    if not accepted.get('passed') or accepted.get('stream') != 'retro':
+        raise ValueError(f'Unaccepted source month: {month}')
+    namelist = folder/'namelist.hrldas'
+    layers = re.findall(r'soil_thick_input\(\s*(\d+)\s*\)\s*=\s*([\d.eE+-]+)',
+                        namelist.read_text(), re.IGNORECASE)
+    actual = [float(v) for _, v in sorted(layers, key=lambda x: int(x[0]))]
+    if len(actual) != 4 or not np.allclose(actual, THICKNESSES, rtol=0, atol=1e-12):
+        raise ValueError(f'Unexpected soil thicknesses: {month}')
+    return [{'path': str(p.relative_to(root)), 'identity': identity(p)} for p in (receipt, namelist)]
 
 
 def derive(ds, day, active):
@@ -58,39 +77,35 @@ def append_buffer(handles, tiles, block, offset):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--domain', choices=('cnrfc', 'ucrb'), default='cnrfc')
     parser.add_argument('--start', type=date.fromisoformat, default=date(1980, 1, 1))
     parser.add_argument('--end', type=date.fromisoformat, default=date(1980, 12, 31))
     parser.add_argument('--tile-size', type=int, default=128)
     parser.add_argument('--buffer-days', type=int, default=31)
     args = parser.parse_args()
+    domain = args.domain
     if args.start > args.end or not 16 <= args.tile_size <= 160 or not 1 <= args.buffer_days <= 31:
         parser.error('Invalid date range, tile size (16–160), or buffer (1–31 days)')
     root = Path(__file__).resolve().parents[1]
     job, user = os.environ['SLURM_JOB_ID'], os.environ['SLURM_JOB_USER']
     work = Path(f'/scratch/{user}/job_{job}/history-stream')
     work.mkdir(parents=True, exist_ok=False)
-    state = root / f'nwm/status/cnrfc/climatology/history-stream-{job}'
+    state = root / f'nwm/status/{domain}/climatology/history-stream-{job}'
     state.mkdir(parents=True, exist_ok=False)
-    output = root / f'nwm/analysis/cnrfc/retro/climatology/history-stream-{job}'
-    report = {'status': 'running', 'job_id': job, 'start': str(args.start), 'end': str(args.end),
+    output = root / f'nwm/analysis/{domain}/retro/climatology/history-stream-{job}'
+    report = {'status': 'running', 'domain': domain, 'job_id': job, 'start': str(args.start), 'end': str(args.end),
               'tile_size': args.tile_size, 'buffer_days': args.buffer_days,
+              'source_model_campaign': MODEL_CAMPAIGN,
               'product_status': 'isolated extraction benchmark', 'days_written': 0}
     started = time.monotonic()
     try:
         days = dates(args.start, args.end)
+        evidence = []
         for month in sorted({d.strftime('%Y%m') for d in days}):
-            folder = root / 'nwm/runs/cnrfc/retro/hu18_pilot_v1' / month
-            accepted = json.loads((folder / 'accepted.json').read_text())
-            if not accepted.get('passed') or accepted.get('stream') != 'retro':
-                raise ValueError(f'Unaccepted source month: {month}')
-            layers = re.findall(r'soil_thick_input\(\s*(\d+)\s*\)\s*=\s*([\d.eE+-]+)',
-                                (folder / 'namelist.hrldas').read_text(), re.IGNORECASE)
-            actual = [float(v) for _, v in sorted(layers, key=lambda x: int(x[0]))]
-            if len(actual) != 4 or not np.allclose(actual, THICKNESSES, rtol=0, atol=1e-12):
-                raise ValueError(f'Unexpected soil thicknesses: {month}')
-        mask_path = root / 'nwm/static/domains/cnrfc/masks/cnrfc_masks.nc'
+            evidence.extend(accepted_month(root, month, domain))
+        mask_path = root / f'nwm/static/domains/{domain}/masks/{domain}_masks.nc'
         mask_identity = identity(mask_path)
-        sources = [root / 'nwm/outputs/cnrfc/retro/daily' /
+        sources = [root / f'nwm/outputs/{domain}/retro/daily' /
                    d.strftime('%Y/%m/%Y%m%d.LDASOUT_DOMAIN1.daily') for d in days]
         records = [{'path': str(p.relative_to(root)), 'identity': identity(p)} for p in sources]
         with Dataset(mask_path) as mask, Dataset(sources[0]) as first:
@@ -115,7 +130,8 @@ def main():
                       active_cells=int(active.sum()), sources=len(sources),
                       input_scan_seconds=0., buffered_write_seconds=0.)
         write_json(state / 'plan.json', report | {'tiles': [{'name': t['name'], 'window': t['window']} for t in tiles],
-                                                'mask_sha256': digest(mask_path), 'sources': records})
+                                                'mask_sha256': digest(mask_path), 'sources': records,
+                                                'model_acceptance_pins': evidence})
         times = date2num([datetime.combine(d, datetime.min.time())+timedelta(hours=12) for d in days], UNITS)
         buffer = np.empty((args.buffer_days, 2, *active.shape), dtype='f4')
         paths = []
@@ -140,6 +156,8 @@ def main():
                 ds.history_start = str(args.start); ds.history_end = str(args.end)
                 ds.day_definition = 'model_interval'; ds.soil_thickness_m = THICKNESSES
                 ds.product_status = 'isolated extraction benchmark'
+                ds.source_model_campaign = MODEL_CAMPAIGN
+                ds.domain = domain
             for i, (day, path) in enumerate(zip(days, sources, strict=True)):
                 tick = time.monotonic()
                 with Dataset(path) as ds:
@@ -177,6 +195,8 @@ def main():
         if identity(mask_path) != mask_identity or any(identity(p) != r['identity']
                                                         for p, r in zip(sources, records, strict=True)):
             raise ValueError('Archive or mask changed during benchmark')
+        if any(identity(root/r['path']) != r['identity'] for r in evidence):
+            raise ValueError('Model acceptance evidence changed during extraction')
         report['sampled_field_comparisons'] = checked
         report['artifacts'] = [publish(p, output / p.name) for p in paths]
         report.update(status='passed', output_bytes=sum(a['bytes'] for a in report['artifacts']))

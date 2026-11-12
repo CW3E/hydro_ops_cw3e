@@ -23,33 +23,44 @@ from hydro_ops.wrf_hydro.production import write_json
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--array-job', type=int, default=5077268)
+    parser.add_argument('--array-job', type=int, required=True)
+    parser.add_argument('--domain', choices=('cnrfc', 'ucrb'), default='cnrfc')
     parser.add_argument('--dates', nargs='+', type=date.fromisoformat,
                         default=[date(2015, 4, 1), date(2023, 4, 1), date(2025, 9, 30)])
     args = parser.parse_args()
+    domain = args.domain
     root = Path(__file__).resolve().parents[1]
     job, task, user = os.environ['SLURM_JOB_ID'], int(os.environ['SLURM_ARRAY_TASK_ID']), os.environ['SLURM_JOB_USER']
     day = args.dates[task]
     array_job = os.environ['SLURM_ARRAY_JOB_ID']
     work = Path(f'/scratch/{user}/job_{job}/rank-map')
     work.mkdir(parents=True, exist_ok=False)
-    output = root / f'nwm/analysis/cnrfc/retro/climatology/wy1980-2025/maps-{array_job}'
-    state = root / f'nwm/status/cnrfc/climatology/maps-{array_job}'
+    output = root / f'nwm/analysis/{domain}/retro/climatology/wy1980-2025/maps-{array_job}'
+    state = root / f'nwm/status/{domain}/climatology/maps-{array_job}'
     state.mkdir(parents=True, exist_ok=True)
-    report = {'status': 'running', 'date': str(day), 'climatology_array': args.array_job}
+    report = {'status': 'running', 'domain': domain, 'date': str(day), 'climatology_array': args.array_job}
     started = time.monotonic()
     try:
-        acceptance = json.loads((root / f'nwm/status/cnrfc/climatology/tiles-{args.array_job}/acceptance.json').read_text())
+        acceptance = json.loads((root / f'nwm/status/{domain}/climatology/tiles-{args.array_job}/acceptance.json').read_text())
         if acceptance['status'] != 'passed':
             raise ValueError('Climatology acceptance required')
-        mask_path = root / 'nwm/static/domains/cnrfc/masks/cnrfc_masks.nc'
+        if acceptance.get('source_model_campaign') != 'repaired_rain_retro_v1':
+            raise ValueError('Corrected-run climatology required; old tables must not be mixed with reruns')
+        if acceptance.get('domain', 'cnrfc') != domain:
+            raise ValueError('Climatology domain mismatch')
+        mask_path = root / f'nwm/static/domains/{domain}/masks/{domain}_masks.nc'
         if digest(mask_path) != acceptance['mask_sha256']:
             raise ValueError('Mask changed')
-        monthly = root / 'nwm/runs/cnrfc/retro/hu18_pilot_v1' / day.strftime('%Y%m') / 'accepted.json'
+        monthly = root / f'nwm/runs/{domain}/retro/repaired_rain_retro_v1' / day.strftime('%Y%m') / 'accepted.json'
         if not json.loads(monthly.read_text()).get('passed'):
             raise ValueError('Unaccepted model month')
-        source = root / 'nwm/outputs/cnrfc/retro/daily' / day.strftime('%Y/%m/%Y%m%d.LDASOUT_DOMAIN1.daily')
+        source = root / f'nwm/outputs/{domain}/retro/daily' / day.strftime('%Y/%m/%Y%m%d.LDASOUT_DOMAIN1.daily')
         before = identity(source)
+        history_plan = json.loads((root / f'nwm/status/{domain}/climatology' /
+                                   f'history-stream-{acceptance["history_job"]}/plan.json').read_text())
+        source_pin = next((p for p in history_plan['sources'] if root/p['path'] == source), None)
+        if source_pin is None or source_pin['identity'] != before:
+            raise ValueError('Map source differs from the accepted corrected climatology history')
         with Dataset(mask_path) as ds:
             active = np.asarray(ds['model_mask'][:], dtype=bool)
             lat, lon = ds['lat'][:], ds['lon'][:]
@@ -104,8 +115,8 @@ def main():
             ds.reference_window_days = 31
             ds.climatology_array_job = str(args.array_job)
             ds.product_status = 'visual-review preview; model-relative ranks, not observational validation'
-        boundaries = gpd.read_file(root / 'nwm/static/domains/cnrfc/boundaries/cnrfc_boundaries.gpkg',
-                                   layer='cnrfc_hu18_union').to_crs(4326)
+        boundaries = gpd.read_file(root / f'nwm/static/domains/{domain}/boundaries/{domain}_boundaries.gpkg',
+                                   layer='cnrfc_hu18_union' if domain == 'cnrfc' else 'ucrb_reporting').to_crs(4326)
         fig, axes = plt.subplots(2, 2, figsize=(13, 13), constrained_layout=True)
         levels = [0, 2, 5, 10, 20, 30, 70, 80, 90, 95, 98, 100]
         cmap = plt.get_cmap('BrBG', len(levels)-1)
@@ -127,7 +138,7 @@ def main():
                 ax.set_aspect(1/np.cos(np.deg2rad(38.)))
                 ax.set_xlabel('Longitude'); ax.set_ylabel('Latitude')
                 ax.set_title(label+(' | amount' if k == 0 else ' | percentile'), fontsize=13)
-        fig.suptitle(f'CNRFC land conditions | {day}\nDaily model means; climatology WY1980–WY2025, ±15-day window', fontsize=17)
+        fig.suptitle(f'{domain.upper()} land conditions | {day}\nDaily model means; climatology WY1980–WY2025, ±15-day window', fontsize=17)
         fig.supxlabel('Brown: lower than usual • Green: higher than usual • SWE rank blank at ≤1 mm\n'
                       'Outline: reporting region; data include active buffer cells. Model-relative, not observed conditions.', fontsize=10)
         png = work / f'{day:%Y%m%d}.land_percentiles.png'

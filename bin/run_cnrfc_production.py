@@ -79,7 +79,8 @@ def simulation_window(year, end_date=None, start_date=None):
 
 def publication_roots(root, campaign, stream='retro', domain='cnrfc'):
     if campaign == 'thermal_refresh_2026_v1':
-        if domain not in ('yampa', 'b120', 'ucrb') or stream not in ('retro', 'nrt'):
+        if ((domain not in ('yampa', 'b120', 'ucrb') or stream not in ('retro', 'nrt'))
+                and (domain, stream) != ('cnrfc', 'nrt')):
             raise ValueError('Invalid thermal refresh domain/stream')
         return root/'nwm/outputs'/domain/stream/campaign, root/'nwm/restarts'/domain/stream/campaign
     if campaign == 'repaired_rain_retro_v1':
@@ -153,6 +154,8 @@ def run(root, year, campaign='production_1979_1981_v1', archive_gate=None, end_d
         gate = json.loads(archive_gate.read_text())
         expected_first = datetime(2026, 2, 1) if stream == 'retro' else datetime(2026, 4, 18)
         expected_end = datetime(2026, 4, 18) if stream == 'retro' else datetime(2026, 11, 8)
+        if domain == 'cnrfc' and stream == 'nrt':
+            expected_first, expected_end = datetime(2026, 4, 17), datetime(2026, 11, 11)
         if (year != 2026 or first != expected_first or end != expected_end
                 or gate.get('status') != 'passed' or gate.get('domain') != domain
                 or gate.get('stream') != stream or gate.get('start') != str(first)

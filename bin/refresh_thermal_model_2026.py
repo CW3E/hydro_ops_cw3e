@@ -27,7 +27,11 @@ PARENTS = {'b120': 'cnrfc', 'yampa': 'ucrb', 'ucrb': 'conus', 'cnrfc': 'conus'}
 PUBLICATION = 'forcing/work/temperature-refresh/campaign-20261109T055015Z/publication/acceptance.json'
 
 
-def interval(stream):
+def interval(stream, domain=None):
+    if domain == 'cnrfc':
+        if stream != 'nrt':
+            raise ValueError('CNRFC uses its existing Retro continuation')
+        return datetime(2026, 4, 17), datetime(2026, 11, 11)
     if stream == 'retro':
         return datetime(2026, 2, 1), datetime(2026, 4, 18)
     if stream == 'nrt':
@@ -41,7 +45,7 @@ def load(path):
 
 def validate_predecessor(record, domain, plan_hash):
     if (record.get('status') != 'complete' or record.get('domain') != domain
-            or record.get('stream') != 'retro' or record.get('end') != str(interval('retro')[1])
+            or record.get('stream') != 'retro' or record.get('end') != str(interval('nrt', domain)[0])
             or record.get('plan_sha256') != plan_hash):
         raise ValueError('Refreshed Retro predecessor must pass for this domain and plan')
 
@@ -153,7 +157,7 @@ def execute(root, state, domain, stream):
     plan = load(state/'plan.json')
     spec = plan['domains'][domain]
     plan_hash = digest(state/'plan.json')
-    start,end = interval(stream)
+    start,end = interval(stream, domain)
     work = state/domain/stream
     work.mkdir(parents=True,exist_ok=False)
     report = {'status':'running','domain':domain,'stream':stream,'start':str(start),'end':str(end),

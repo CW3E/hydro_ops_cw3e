@@ -6,9 +6,11 @@ from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
-def test_tile_worker_end_to_end(tmp_path, monkeypatch):
+@pytest.mark.parametrize('domain', ['cnrfc', 'ucrb'])
+def test_tile_worker_end_to_end(tmp_path, monkeypatch, domain):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'bin'))
     worker = importlib.import_module('produce_nwm_climatology_tile')
     benchmark = importlib.import_module('benchmark_nwm_climatology')
@@ -22,9 +24,9 @@ def test_tile_worker_end_to_end(tmp_path, monkeypatch):
     values[:, :, 0, 0] = np.nan
     source = tmp_path / 'tile-002.nc'
     benchmark.write_history(source, tile, inputs, values)
-    state = tmp_path / 'nwm/status/cnrfc/climatology/history-stream-1'
+    state = tmp_path / f'nwm/status/{domain}/climatology/history-stream-1'
     state.mkdir(parents=True)
-    (state / 'status.json').write_text(json.dumps({'status': 'passed', 'artifacts': [
+    (state / 'status.json').write_text(json.dumps({'status': 'passed', 'domain': domain, 'artifacts': [
         {'path': str(source), 'sha256': benchmark.digest(source)}]}))
     monkeypatch.setattr(worker, '__file__', str(tmp_path / 'bin/worker.py'))
     real_path = Path
@@ -32,22 +34,29 @@ def test_tile_worker_end_to_end(tmp_path, monkeypatch):
     for key, value in {'SLURM_ARRAY_JOB_ID': '2', 'SLURM_ARRAY_TASK_ID': '0',
                        'SLURM_JOB_ID': '3', 'SLURM_JOB_USER': 'test-user'}.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setattr(sys, 'argv', ['worker', '--history-job', '1'])
+    monkeypatch.setattr(sys, 'argv', ['worker', '--history-job', '1', '--domain', domain])
     worker.main()
-    report = json.loads((tmp_path / 'nwm/status/cnrfc/climatology/tiles-2/task-000.json').read_text())
+    report = json.loads((tmp_path / f'nwm/status/{domain}/climatology/tiles-2/task-000.json').read_text())
     assert report['status'] == 'passed'
     assert report['fields']['SOIL_WATER']['valid_cells'] == 5
     assert report['fields']['SNEQV']['oracle_comparisons'] > 0
     assert Path(report['artifact']['path']).is_file()
-    mask = tmp_path / 'nwm/static/domains/cnrfc/masks/cnrfc_masks.nc'
+    assert report['domain'] == domain
+    mask = tmp_path / f'nwm/static/domains/{domain}/masks/{domain}_masks.nc'
     mask.parent.mkdir(parents=True)
     mask.write_bytes(b'fixture-mask')
-    (state / 'plan.json').write_text(json.dumps({'tiles': [{'name': 'tile-002', 'window': tile['window']}],
+    (state / 'plan.json').write_text(json.dumps({'domain': domain, 'tiles': [{'name': 'tile-002', 'window': tile['window']}],
                                                'active_cells': 5, 'mask_sha256': benchmark.digest(mask)}))
     audit = importlib.import_module('audit_nwm_climatology_tiles')
     monkeypatch.setattr(audit, '__file__', str(tmp_path / 'bin/audit.py'))
-    monkeypatch.setattr(sys, 'argv', ['audit', '--history-job', '1', '--array-job', '2'])
+    monkeypatch.setattr(sys, 'argv', ['audit', '--history-job', '1', '--array-job', '2', '--domain', domain])
     audit.main()
-    acceptance = json.loads((tmp_path / 'nwm/status/cnrfc/climatology/tiles-2/acceptance.json').read_text())
+    acceptance = json.loads((tmp_path / f'nwm/status/{domain}/climatology/tiles-2/acceptance.json').read_text())
     assert acceptance['status'] == 'passed'
     assert acceptance['tile_count'] == 1
+    assert acceptance['domain'] == domain
+    plan = json.loads((state/'plan.json').read_text())
+    plan['domain'] = 'ucrb' if domain == 'cnrfc' else 'cnrfc'
+    (state/'plan.json').write_text(json.dumps(plan))
+    with pytest.raises(ValueError, match='domain mismatch'):
+        audit.main()

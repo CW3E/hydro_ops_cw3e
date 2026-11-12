@@ -42,26 +42,31 @@ def check_quantiles(q, count, windows):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--history-job', required=True, type=int)
+    parser.add_argument('--domain', choices=('cnrfc', 'ucrb'), default='cnrfc')
     args = parser.parse_args()
+    domain = args.domain
     root = Path(__file__).resolve().parents[1]
     job = os.environ['SLURM_ARRAY_JOB_ID']; index = int(os.environ['SLURM_ARRAY_TASK_ID'])
     task_job = os.environ['SLURM_JOB_ID']; user = os.environ['SLURM_JOB_USER']
     work = Path(f'/scratch/{user}/job_{task_job}/percentiles-{index:03d}')
     work.mkdir(parents=True, exist_ok=False)
-    state = root / f'nwm/status/cnrfc/climatology/tiles-{job}'
+    state = root / f'nwm/status/{domain}/climatology/tiles-{job}'
     state.mkdir(parents=True, exist_ok=True)
     # Exclusive claim prevents two processes writing the same task's publication.
     with (state / f'task-{index:03d}.claim').open('x') as claim:
         claim.write(task_job+'\n')
-    report = {'status': 'running', 'array_job': job, 'task_index': index,
+    report = {'status': 'running', 'domain': domain, 'array_job': job, 'task_index': index,
               'history_job': args.history_job, 'reference_start': str(REFERENCE_START),
               'reference_end': str(REFERENCE_END), 'product_status': 'validated tile candidate; domain audit pending'}
     started = time.monotonic()
     try:
-        source_state = root / f'nwm/status/cnrfc/climatology/history-stream-{args.history_job}'
+        source_state = root / f'nwm/status/{domain}/climatology/history-stream-{args.history_job}'
         accepted = json.loads((source_state / 'status.json').read_text())
         if accepted.get('status') != 'passed':
             raise ValueError('History extraction has not passed acceptance')
+        if accepted.get('domain', 'cnrfc') != domain:
+            raise ValueError('History domain mismatch')
+        report['source_model_campaign'] = accepted.get('source_model_campaign', 'legacy_unspecified')
         artifact = accepted['artifacts'][index]
         source = Path(artifact['path'])
         history = work / 'history.nc'
@@ -107,13 +112,15 @@ def main():
             ds.product_status = 'validated tile candidate; full-domain acceptance pending'
             ds.source_history_sha256 = artifact['sha256']
             ds.source_history_job = str(args.history_job)
+            ds.source_model_campaign = report['source_model_campaign']
+            ds.domain = domain
         # Verify written thresholds one calendar date at a time.
         with Dataset(target) as ds:
             for name in results:
                 for day in range(366):
                     np.testing.assert_array_equal(np.ma.asarray(ds[name][day]).filled(np.nan), results[name][day])
                     np.testing.assert_array_equal(ds[name+'_sample_count'][day], counts[name][day])
-        output = root / f'nwm/analysis/cnrfc/retro/climatology/wy1980-2025/tiles-{job}' / source.stem
+        output = root / f'nwm/analysis/{domain}/retro/climatology/wy1980-2025/tiles-{job}' / source.stem
         report['artifact'] = publish(target, output / 'percentiles.nc')
         report['status'] = 'passed'
     except BaseException as error:

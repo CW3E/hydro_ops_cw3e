@@ -280,3 +280,41 @@ acceptance finished in 6m32s. This successful publication, together with the
 daily restart-continuation test, allowed activation of the daily dependent hook.
 No separate model cron row was installed. Restart/staging/backup retention
 remains plan-only; enabling daily simulation does not authorize data deletion.
+
+## Daily replay recommissioning — November 11, 2026
+
+Corrected CNRFC NRT campaign 5252817 published through November 11 00 UTC with
+monthly plus terminal checkpoints. The ordinary 11-day planner therefore selects
+October 1, not October 31: the first daily cycle must replay 41 already-simulated
+days to establish daily checkpoints. This is not a gap in model coverage.
+
+Two jobs were submitted using the existing daily runner, 64 MPI ranks, 120 GB
+scratch and a two-hour limit each, without NRTRES:
+
+- **5260647:** isolated October 1–3 daily-checkpoint/restart-continuity test,
+  after successful forcing revision/publication job **5260639**.
+- **5260648:** October 1–November 11 replay and canonical publication, only after
+  successful 5260647. It uses an 11-day rewind setting and the available monthly
+  checkpoint, pins forcing, and publishes through the normal acceptance and
+  recoverable transaction gates. No old outputs/restarts are deleted.
+
+The runtime ledger is `nwm/status/cnrfc/nrt-daily/recommission-20261111.json`.
+Job-specific reports are `nwm/runs/cnrfc/nrt/cycles/job-<id>/cycle.json`.
+Both jobs save daily 00 UTC restart pairs; the isolated test writes only its test
+mirror, and the second job publishes accepted daily checkpoints to canonical
+storage. Cron remains forcing-only. Pending older PRISM revisions are not
+implicitly resolved by this replay: later forcing publications outside the
+11-day window need an explicit model rewind/reconciliation before claiming that
+the model reflects all revised forcing.
+
+Both recommissioning jobs passed: **5260647** completed the two-day isolated
+restart-continuation test in 3m18s; **5260648** completed the 41-day replay in
+35m25s. Its publication journal contains 248 activated artifacts, and 41 daily
+restart pairs were verified at their canonical paths. No source revisions were
+reported after its forcing snapshot. This validates the runner, not the still
+pending PRISM revision queue. At the subsequent inspection that queue spanned
+October 5–November 9 (36 dates). See the
+[forcing catch-up commissioning plan](nrt_operational_extension_schedule.md#november-2026-revision-catch-up-commissioning).
+Once those revisions are published, require an explicit rewind to October 4 or
+an earlier paired checkpoint, with a freshly pinned forcing snapshot. Do not
+resume model cron merely because the 41-day runner test passed.

@@ -1,5 +1,8 @@
 # Daily and monthly forcing summaries
 
+For calendar-month temperature and precipitation percentile tables derived from
+these summaries, see [monthly forcing climatology](forcing_monthly_climatology.md).
+
 Use `bin/aggregate_forcing.py` from the `hydro-ops` environment. It supports any
 domain whose forcing follows the existing `YYYY/MM/YYYYMMDD.LDASIN_DOMAIN1`
 layout (also accepts `.nc`). Domain size and mask are read from the files, not

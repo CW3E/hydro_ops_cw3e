@@ -55,7 +55,7 @@ def extract_year(task):
     root, work = Path(root), Path(work)
     started = time.monotonic()
     # Verify the documented layer thicknesses against each monthly run namelist.
-    campaign = 'hu18_pilot_v1' if domain == 'cnrfc' else 'production_v1'
+    campaign = 'repaired_rain_retro_v1' if domain in ('cnrfc', 'ucrb') else 'production_v1'
     for month in sorted({d[:7].replace('-', '') for d in day_strings}):
         folder = root / f'nwm/runs/{domain}/retro/{campaign}' / month
         acceptance = json.loads((folder / 'accepted.json').read_text())

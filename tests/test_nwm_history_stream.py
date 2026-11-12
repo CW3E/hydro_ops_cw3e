@@ -1,11 +1,40 @@
 """Small-grid streaming writer checks, with no production archive dependency."""
 import importlib
+import json
 from datetime import date
 from pathlib import Path
 
 import numpy as np
 import pytest
 from netCDF4 import Dataset
+
+
+@pytest.mark.parametrize('domain', ['cnrfc', 'ucrb'])
+def test_corrected_month_gate_rejects_old_evidence(tmp_path, monkeypatch, domain):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'bin'))
+    module = importlib.import_module('benchmark_nwm_history_stream')
+    old = tmp_path/f'nwm/runs/{domain}/retro/hu18_pilot_v1/198101'
+    old.mkdir(parents=True)
+    (old/'accepted.json').write_text('{"passed": true, "stream": "retro"}')
+    with pytest.raises(FileNotFoundError):
+        module.accepted_month(tmp_path, '198101', domain)
+    corrected = old.parent.parent/module.MODEL_CAMPAIGN/'198101'
+    corrected.mkdir(parents=True)
+    receipt = corrected/'accepted.json'
+    receipt.write_text('{"passed": true, "stream": "retro"}')
+    namelist = corrected/'namelist.hrldas'
+    namelist.write_text('\n'.join(f'soil_thick_input({i}) = {v}'
+                                 for i, v in enumerate(module.THICKNESSES, 1)))
+    pins = module.accepted_month(tmp_path, '198101', domain)
+    assert len(pins) == 2
+    assert all(module.MODEL_CAMPAIGN in p['path'] for p in pins)
+    receipt.write_text(json.dumps({'passed': False, 'stream': 'retro'}))
+    with pytest.raises(ValueError, match='Unaccepted'):
+        module.accepted_month(tmp_path, '198101', domain)
+    receipt.write_text('{"passed": true, "stream": "retro"}')
+    namelist.write_text('soil_thick_input(1) = 9')
+    with pytest.raises(ValueError, match='thicknesses'):
+        module.accepted_month(tmp_path, '198101', domain)
 
 
 def test_stream_derivation_and_partial_buffer(tmp_path, monkeypatch):

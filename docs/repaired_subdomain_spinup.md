@@ -333,6 +333,63 @@ new cleanup-scope and campaign-gate checks plus production tests: 10 passed.
 Ruff, shell syntax and diff checks passed. Submission is not completion or
 scientific validation; inspect monthly acceptance and job-specific reports.
 
+## CNRFC corrected Retro-to-NRT continuation
+
+The authorized NRT continuation starts at **2026-04-17 00 UTC**, exactly where
+Retro job **5202844** ends, and stops at **2026-11-11 00 UTC** (208 days).
+The November 11 forcing file contained 00–02 UTC at submission; only its 00 UTC
+record is needed as the terminal forcing hour. This CNRFC handoff intentionally
+differs from the April 18 handoff used by the other three refreshed domains.
+
+Preflight **5252816** depends on successful Retro completion **5202844** and
+CNRFC NRT forcing synchronization **5251966**. `bin/run_cnrfc_repaired_nrt.py`
+verifies the actual Retro completion receipt and matching restart pair, model
+parameters, accepted startup gate, NRT subset lineage, and endpoint coverage.
+It records a separate frozen campaign under
+`nwm/status/cnrfc_repaired_nrt_20260417_20261111_v1/`; submission details are in
+`submission.json`, and preparation acceptance is `prepare-acceptance.json`.
+
+Model **5252817** depends on that preflight and requests **64 MPI ranks**, 120 GB
+scratch and eight hours on shared-128, without NRTRES. It reuses the staged
+thermal-refresh runner with explicit CNRFC bounds, runs a two-day continuous/
+warm-restart equivalence check, then continues the full interval only if that
+check passes. The other domains' intervals and campaigns are unchanged.
+Outputs are daily LDASOUT plus hourly/daily CHRTOUT, with calendar-day hourly
+collections and monthly-plus-terminal restart pairs (`rst_typ=1`).
+
+Forcing is pinned into an immutable snapshot; current lineage is checked again
+before transactional publication to canonical CNRFC NRT paths. Changed sources,
+failed startup checks, or failed archive acceptance prevent publication.
+Superseded outputs/checkpoints remain recoverable in the campaign workspace;
+no old results are deleted on submission. The final outcome is
+`cnrfc/nrt/acceptance.json` beneath the campaign root. Routine model cron remains
+paused. Validation before submission: **909 passed, four skipped**, Ruff,
+shell syntax and diff checks passed. Submission is not model acceptance.
+
+## CNRFC 2026 release gate (November 10, 2026)
+
+The 2025 continuation completed with an accepted January 1, 2026 restart pair.
+Job **5202844** remains held pending refreshed forcing identities following the
+PRISM thermal publication. Revalidation **5252358** waits for successful completion
+of the queued CNRFC Retro sync **5251970**, so pins are not refreshed before that
+writer finishes. It uses four CPUs and one hour on shared-128, without NRTRES.
+
+The one-time gate script and submission ledger are retained in
+`nwm/status/repaired_rain_retro_v1/cnrfc-extension-2001-20260417/` as
+`refresh-2026-preflight.py` and `revalidation-5252358.json`. Under publication/subset
+locks it verifies current CONUS and CNRFC lineage for all 107 forcing days,
+including the terminal midnight day, the 2025 restart pair, parameter checksums,
+and existing startup acceptance. It preserves the original 2026 pins before
+atomically replacing only `cnrfc-2026.json`. No forcing is rewritten.
+
+Only after these checks pass does the gate request release of **5202844**;
+the model also depends on successful completion of **5252358**. A failed gate
+does not authorize model execution. The job-specific outcome is
+`refresh-2026-5252358.json`, not the original all-years acceptance record.
+The model endpoint remains **April 17, 2026 00 UTC**; this is not an NRT
+continuation or an extension of the authorized simulation interval. Routine
+model cron hooks remain paused. Existing extension tests: 21 passed.
+
 ## CNRFC continuation through April 2026
 
 On November 7, 2026, all 22 CNRFC annual completion records (1979–2000)
