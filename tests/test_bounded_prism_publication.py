@@ -1,5 +1,5 @@
 import json
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -63,6 +63,37 @@ def test_exact_twenty_product_plan(publisher, tmp_path, stream):
     assert len(plan['targets']) == 20
     assert len(plan['source_signatures']) == 6
     assert plan['daily'] == ['2026-04-11', '2026-04-12']
+
+
+def test_open_month_publication_scope_requires_explicit_acceptance(publisher, tmp_path):
+    from hydro_ops.forcing.replay_month_scope import month_scope
+    today = datetime.now(UTC).date()
+    if today.day < 3:
+        pytest.skip('Needs two completed dates in the current month')
+    day = today.replace(day=2)
+    work, day = fixture(publisher, tmp_path, day=day)
+    # Remove only the synthetic monthly artifacts; no real data involved.
+    for path in tmp_path.rglob('*.monthly'):
+        path.unlink()
+    scope = month_scope(tmp_path, 'nrt', day, defer_open_month=True)
+    context = publisher.load(work/'context.json')
+    context['month_scope'] = scope
+    publisher.atomic_json(work/'context.json', context)
+    stages = publisher.load(work/'stages.json')
+    del stages['stages']['monthly']
+    for stage in stages['stages'].values():
+        stage['artifacts'] = [a for a in stage['artifacts'] if not a['path'].endswith('.monthly')]
+    publisher.atomic_json(work/'stages.json', stages)
+    with pytest.raises(ValueError, match='Monthly obligations'):
+        publisher.bounded_plan(tmp_path, work, 'nrt', day)
+    for name in ('acceptance.json', 'noop.json'):
+        report = publisher.load(work/name)
+        report['month_scope'] = scope
+        publisher.atomic_json(work/name, report)
+    plan = publisher.bounded_plan(tmp_path, work, 'nrt', day)
+    assert plan['months'] == []
+    assert plan['month_scope']['deferred_months'] == [str(day.replace(day=1))]
+    assert len(plan['targets']) == 15
 
 
 def test_month_boundary_requires_both_months(publisher, tmp_path):

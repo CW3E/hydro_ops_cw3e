@@ -376,10 +376,23 @@ class RecentNrt:
             "verification": POLICY, "nrt_receipt": str(receipt_path), "source_files": inputs["files"]})
         return destination, receipt
 
+    def retain_legacy_constraint(self, day):
+        """Do not downgrade/rebuild pre-policy constrained days lacking a release-2 pin."""
+        from hydro_ops.forcing.prism_maturity import day_ready, policy
+        if not policy(self.root).get('enabled') or day_ready(self.root, day, 'nrt'):
+            return None
+        path = day_path(self.output, day)
+        old = read_json(path.with_name(path.name + '.nrt-receipt.json'))
+        if old.get('prism_constrained') and old.get('status') == 'passed':
+            if old.get('published_identity') != identity(path):
+                raise ValueError('Cannot retain legacy constraint with stale output receipt')
+            return {'day': str(day), 'status': 'unchanged', 'gfs_hours': old.get('gfs_hours', 0),
+                    'prism_constrained': True, 'policy': 'retained_pre_policy_constraint'}
+        return None
+
     def prism_paths(self, day):
-        root = self.root / "forcing/inputs/oregon_state/prism/an/4km/daily"
-        return [root / variable / f"{d:%Y/%m}/prism_{variable}_us_25m_{d:%Y%m%d}.nc"
-                for d in (day, day + timedelta(days=1)) for variable in ("ppt", "tmin", "tmax")]
+        from hydro_ops.forcing.prism_maturity import selected_nrt_paths
+        return selected_nrt_paths(self.root, day)
 
     def prism_cache(self, reuse=True):
         container = self.output.parent if self.output.name == "hourly" else self.output
@@ -426,6 +439,7 @@ class RecentNrt:
             _atomic_json(marker, {"signature": signature, "identity": identity(window)})
             return
         run(self.root / "bin/produce_prism_constrained_daily.py", "--day", d,
+            "--prism-root", prism[0].parents[3],
             "--complete-root", self.baseline, "--output-root", windows,
             "--revision", "early" if (self.as_of.date() - d).days < 30 else "provisional",
             "--stream", "nrt", "--work-directory", tmp,
@@ -442,6 +456,9 @@ class RecentNrt:
             timings.append({"stage": "persistent_window_store", "day": str(d), "seconds": time.monotonic() - started})
 
     def produce_day(self, day, *, end_hour=23, latest=False):
+        retained = self.retain_legacy_constraint(day)
+        if retained and not latest:
+            return retained
         if end_hour != 23 and not latest:
             raise ValueError("Partial publication requires latest-hour mode")
         prism = [] if latest else self.prism_paths(day)

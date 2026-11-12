@@ -1,5 +1,11 @@
 # NWM 1-km meteorological forcing production workflow
 
+The newly approved [two-stage PRISM revision policy](prism_revision_policy.md)
+supersedes the all-release revision objective once its tested activation gate
+passes: daily second-release NRT selection, monthly stable retro selection.
+Until activation, the prior policy remains effective; the broad NRT catch-up
+campaign is paused at its batch boundary. Model hooks remain disabled.
+
 ## Current operating state (November 10, 2026)
 
 Daily and six-hourly forcing cycles and status reporting are enabled on login1;

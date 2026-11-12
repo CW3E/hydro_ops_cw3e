@@ -142,6 +142,10 @@ def main() -> int:
                 for prism_day in prism_days
                 for variable in ("ppt", "tmin", "tmax")
             )
+            from hydro_ops.forcing.prism_maturity import day_ready, policy
+            if policy(settings.project_root).get('enabled'):
+                # Routine NRT constraints belong to the pinned-release replay path.
+                prism_ready = args.stream == 'retro' and day_ready(settings.project_root, day, 'retro')
             if not prism_ready:
                 blocked_without_prism.append(day)
             elif not previous_baseline.is_file():

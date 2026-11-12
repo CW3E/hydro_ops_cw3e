@@ -18,6 +18,8 @@ def test_schedule_orders_scan_replay_and_sanitizes_reservation(monkeypatch, tmp_
     assert '--dependency=afterok:101' in calls[1][0]
     assert calls[1][0][-4:] == ['--limit', '2', '--execute', '--publish']
     assert '--routine' in calls[1][0]
+    assert '--reuse-baselines' in calls[1][0]
+    assert result['baseline_reuse'] == 'exact_input_accepted_only'
     assert calls[1][0][calls[1][0].index('--stream')+1] == stream
     assert all('SBATCH_RESERVATION' not in kwargs['env'] for _, kwargs in calls)
 

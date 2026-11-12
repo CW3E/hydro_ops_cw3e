@@ -2,6 +2,7 @@
 from datetime import date, timedelta
 from pathlib import Path
 
+from .prism_maturity import day_ready, input_root, policy
 from .prism_revision_queue import source_signature
 
 
@@ -33,7 +34,7 @@ def plan(state, root):
         for window in item['windows']:
             for var in ('ppt', 'tmin', 'tmax'):
                 d = date.fromisoformat(window)
-                path = root/'forcing/inputs/oregon_state/prism/an/4km/daily'/var/d.strftime(
+                path = input_root(root, event['stream'])/var/d.strftime(
                     f'%Y/%m/prism_{var}_us_25m_%Y%m%d.nc')
                 if not path.is_file() or not path.with_suffix('.release.json').is_file():
                     missing.append(f'{var}/{window}')
@@ -41,8 +42,10 @@ def plan(state, root):
                     item['source_snapshot'][f'{var}/{window}'] = source_signature(path)
         stale = [k for k, v in event['sources'].items()
                  if item['source_snapshot'].get(k, {}).get('signature') != v]
+        immature = policy(root).get('enabled') and not day_ready(root, day, event['stream'])
         item.update(missing_prism=missing, superseded_queue_sources=stale,
-                    status='blocked_sources' if missing or stale else
+                    maturity_blocked=bool(immature),
+                    status='blocked_sources' if missing or stale or immature else
                     'needs_baseline' if item['missing_baselines'] else 'ready_for_candidate')
         rows.append(item)
     return {'status': 'planned', 'production_modified': False, 'automatic_replay_enabled': False,

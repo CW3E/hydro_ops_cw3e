@@ -14,10 +14,13 @@ from publish_prism_repair_wave import DOMAINS, PARENTS
 
 from hydro_ops.forcing import nrt_cycle
 from hydro_ops.forcing.model_interval import load_forcing_reducers
+from hydro_ops.forcing.prism_maturity import input_root
 from hydro_ops.forcing.prism_replay_execution import run_stage
 from hydro_ops.forcing.prism_revision_queue import acknowledge, enqueue, source_signature
 from hydro_ops.forcing.rain_repair_writer import digest, fingerprint
 from hydro_ops.forcing.repair_transaction import atomic_json
+from hydro_ops.forcing.replay_baseline_cache import import_baseline
+from hydro_ops.forcing.replay_month_scope import month_scope, validate_scope
 from hydro_ops.forcing.streams import validate_stream_output_root
 from hydro_ops.forcing.temporal_summary import next_month, summarize, summary_path
 
@@ -46,6 +49,11 @@ def main():
     parser.add_argument('--resume-job', help='Reuse the isolated workspace from this earlier job ID')
     parser.add_argument('--workspace-id', help='Numeric isolated workspace ID for a bounded multi-day batch')
     parser.add_argument('--day', type=date.fromisoformat, help='Explicit queued date for bounded commissioning')
+    parser.add_argument('--baseline-reuse-root', type=Path, action='append', default=[],
+                        help='Opt-in accepted baseline cache; exact current inputs and checksum required')
+    parser.add_argument('--defer-open-month', action='store_true')
+    parser.add_argument('--prism-source-root', type=Path,
+                        help='Explicit pinned input tree for isolated maturity-policy commissioning')
     args = parser.parse_args()
     if args.workspace_id and args.resume_job:
         parser.error('Choose workspace-id or resume-job, not both')
@@ -55,6 +63,8 @@ def main():
     day = args.day or day
     months = sorted({d.replace(day=1) for d in (day-timedelta(days=1), day)})
     stream = 'nrt' if args.case == 'daily' else 'retro'
+    scope = month_scope(root, stream, day, defer_open_month=args.defer_open_month)
+    months = [date.fromisoformat(m) for m in scope['months']]
     job = os.environ['SLURM_JOB_ID']
     work, windows, calendar = replay_paths(root, args.workspace_id or job, stream, args.resume_job)
     work.mkdir(parents=True, exist_ok=True)
@@ -68,11 +78,13 @@ def main():
     key = f'{stream}/{day}'
     if not context_path.exists():
         context = {'pins': {}, 'prism': {}, 'case': args.case, 'day': str(day)}
+        if args.defer_open_month:
+            context['month_scope'] = scope
         for offset in (0, 1):
             d = day+timedelta(days=offset)
             for var in ('ppt', 'tmin', 'tmax'):
                 rel = Path(var)/d.strftime(f'%Y/%m/prism_{var}_us_25m_%Y%m%d.nc')
-                source = root/'forcing/inputs/oregon_state/prism/an/4km/daily'/rel
+                source = (args.prism_source_root or input_root(root, stream))/rel
                 sig = source_signature(source)
                 target = work/'prism'/rel
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -92,7 +104,7 @@ def main():
             target.parent.mkdir(parents=True, exist_ok=True)
             target.symlink_to(source)
             context['pins'][str(source)] = list(fingerprint(source))
-        start, stop = months[0], next_month(months[-1])
+        start, stop = (months[0], next_month(months[-1])) if months else (day, day)
         for offset in range((stop-start).days):
             d = start+timedelta(days=offset)
             if d in (day-timedelta(days=1), day):
@@ -108,6 +120,12 @@ def main():
         atomic_json(context_path, context)
     context = json.loads(context_path.read_text())
     def check_context():
+        if context.get('month_scope') is not None:
+            validate_scope(root, stream, day, context['month_scope'])
+            if context['month_scope'] != scope:
+                raise ValueError('Replay monthly policy changed')
+        elif args.defer_open_month:
+            raise ValueError('Cannot change monthly policy in an existing workspace')
         if context['case'] != args.case or context.get('day', str(default_day)) != str(day):
             raise ValueError('Case changed')
         for path, pin in context['pins'].items():
@@ -153,6 +171,19 @@ def main():
     for offset in (-1, 0, 1):
         d = day+timedelta(days=offset)
         def baseline(d=d):
+            for cache_root in args.baseline_reuse_root:
+                selections, inputs = nrt_cycle.baseline_plan(d, engine.layout, engine.config)
+                if {s.product for s in selections} != {'nldas2'}:
+                    raise ValueError('Baseline replay cache requires NLDAS-2 for every hour')
+                inputs.update(assets=engine.assets, gfs_bundles=[])
+                target = work/'baseline'/d.strftime('%Y/%m/%Y%m%d.LDASIN_DOMAIN1')
+                imported = import_baseline(
+                    cache_root/d.strftime('%Y/%m/%Y%m%d.LDASIN_DOMAIN1'), target,
+                    nrt_cycle.fingerprint(inputs), d)
+                if imported:
+                    print(json.dumps({'baseline_cache': imported['cache_import'], 'day': str(d)}), flush=True)
+                    return passed([target, target.with_name(target.name+'.nrt-receipt.json')],
+                                  baseline_cache=imported['cache_import'])
             target, receipt = engine.baseline_day(d)
             if receipt['status'] != 'passed' or not receipt['complete_day']:
                 raise ValueError('Baseline not accepted')
@@ -235,6 +266,8 @@ def main():
               'reused': reused, 'queue_pending': len(state['pending']), 'production_modified': False,
               'live_queue_modified': False, 'source_refresh': 'isolated snapshot of downloaded sources, no live acquisition',
               'full_live_cron_test': False, 'noop': not was_pending and not executed}
+    if args.defer_open_month:
+        result['month_scope'] = scope
     atomic_json(work/('noop.json' if result['noop'] else 'acceptance.json'), result)
     print(json.dumps(result), flush=True)
     return 0

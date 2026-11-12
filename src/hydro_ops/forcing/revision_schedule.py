@@ -16,7 +16,7 @@ def commands(cycle, stream, partition, account, dependencies):
                f'--job-name=nwm-cycle-{cycle}-revision-scan', 'slurm/queue_prism_revisions.sh']
     worker = [*base, f'--job-name=nwm-cycle-{cycle}-revision-replay',
               'slurm/run_bounded_revision_queue.sh', '--stream', stream,
-              '--routine', '--limit', '2', '--execute', '--publish']
+              '--routine', '--reuse-baselines', '--limit', '2', '--execute', '--publish']
     return scanner, worker
 
 
@@ -32,4 +32,5 @@ def submit(root, *, cycle, stream, partition, account, dependencies):
     worker.insert(1, f'--dependency=afterok:{scan_id}')
     return {'scan_job_id': scan_id, 'replay_job_id': launch(worker),
             'maximum_dates': 2, 'policy': 'bounded_existing_products',
+            'baseline_reuse': 'exact_input_accepted_only',
             'backlog_completion_required': False}

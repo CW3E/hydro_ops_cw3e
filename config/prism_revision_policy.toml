@@ -1,0 +1,7 @@
+# Two maturity stages, not every downloaded PRISM release.
+enabled = true
+# Requested policy; stays inactive until the tested activation report exists.
+activation_report = "forcing/status/prism-maturity/activation.json"
+nrt_window_days = 11
+nrt_grid_count = 2
+retro_minimum_grid_count = 8

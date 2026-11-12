@@ -6,6 +6,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from hydro_ops.forcing.prism_maturity import apply_queue_policy, policy
 from hydro_ops.forcing.prism_replay import plan
 from hydro_ops.forcing.prism_revision_queue import enqueue, source_signature
 from hydro_ops.forcing.repair_transaction import atomic_json
@@ -36,7 +37,10 @@ def main():
         def exists(stream, day):
             return (root/'forcing/outputs/conus'/stream/'hourly'/day.strftime(
                 '%Y/%m/%Y%m%d.LDASIN_DOMAIN1')).exists()
-        enqueue(state, sources, exists)
+        if policy(root).get('enabled'):
+            apply_queue_policy(state, root, today, sources)
+        else:
+            enqueue(state, sources, exists)
         state.update(scanned_at=datetime.now(UTC).isoformat(), lookback_days=args.lookback_days,
                      status='pending' if state['pending'] else 'current',
                      automatic_replay_enabled=False,

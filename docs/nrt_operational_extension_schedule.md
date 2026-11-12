@@ -1,5 +1,10 @@
 # Latest-hour NRT scheduling
 
+For the approved second-release/stable-release policy and its guarded rollout,
+see [PRISM revision policy](prism_revision_policy.md). It replaces the broad
+all-release NRT replay objective after activation; the historical campaign and
+benchmark notes below do not override that policy.
+
 The existing `bin/update_nwm_forcing.py --cycle ...` entry point now routes NRT
 cycles through the validated latest-hour path.
 This integration is undergoing its first coordinated production run.
@@ -197,6 +202,114 @@ latency must be measured. A summary controller already holding the publication
 lock causes a new overlapping summary attempt to fail visibly, not write twice.
 
 ## Commands
+
+### Baseline reuse experiment (not enabled in routine cycles)
+
+The bounded revision replay currently builds three baseline days per target
+date. Adjacent targets overlap, and an accepted baseline may also already exist
+in the retained baseline archive. The opt-in `--baseline-reuse-root` argument to
+`bin/test_isolated_revision_replay.py` tests avoiding those repeated builds.
+Only complete NLDAS-2-selected days with matching current source/configuration/
+asset fingerprints, accepted receipts, file identities and SHA-256 checksums
+are eligible. A miss rebuilds normally. Imports are independent copies, not
+shared writable inodes; source receipts and identities are checked again after
+copying. Existing replay acceptance, source-change rejection and publication
+gates remain unchanged.
+
+Benchmark job **5253538**, dependent on successful completion of **5251965**,
+uses its accepted October 2 reference workspace. It runs the full isolated replay,
+checks its no-op retry, then compares every hourly variable and mask exactly.
+Its report is
+`forcing/work/isolated-revision-replay/5253538/baseline-reuse-benchmark.json`.
+Neither this benchmark nor the new optional argument enables routine reuse or
+changes the live revision queue. Shared PRISM-window computation and combined
+summary publication remain separate optimization work, not implemented here.
+
+The benchmark passed: the isolated candidate took 62m46s (about 111 minutes
+for the reference), with three verified baseline imports taking 96 seconds
+instead of about 44 minutes of rebuilding. All hourly variables and masks
+matched exactly; the no-op retry passed. Total benchmark wall time was 65m44s
+on 64 CPUs. This does not include live publication and does not establish the
+cache-hit rate of the retained operational baseline archive.
+
+`bin/run_bounded_revision_queue.py --reuse-baselines` now tries earlier accepted
+workspaces **within the same batch**, newest first, then the retained CONUS
+baseline archive. It does not search arbitrary historical experiment directories.
+Every imported day still needs the exact-input and checksum checks above. Both
+candidate/no-op and publication/no-op gates remain in place; queue acknowledgement
+is unchanged. Per-date candidate and publication elapsed seconds are recorded
+in the batch report. The option remains off by default pending live validation.
+
+Live commissioning job **5260639** processes the queued NRT dates October 3–4,
+2026, with 64 CPUs and the existing 120 GB scratch request. It publishes only
+after the existing gates pass, including daily/monthly summaries and all four
+subdomain subsets. The report is
+`forcing/work/bounded-revision-queue/5260639/acceptance.json`; inspect its per-day
+isolated `stages.json` records for actual baseline imports. It tests retained
+archive reuse and adjacent-date reuse without changing cron defaults or enabling
+model runs. Do not infer successful publication from submission alone.
+
+### November 2026 revision catch-up commissioning
+
+Job **5260639** subsequently passed both dates and publication/no-op checks:
+October 3 took 56.96 minutes for candidate/no-op and 15.42 minutes for
+publication/no-op; October 4 took 57.05 and 15.17 minutes respectively.
+The remaining NRT queue at inspection contained 36 contiguous dates,
+**2026-10-05 through 2026-11-09**. These are pending source-reconciliation
+obligations, not 36 missing hourly files or proof of a numerical change on every
+cell/date. Daily automatic replay remains bounded to two eligible dates.
+
+The original replay gate requires whole-month context. This intentionally
+defers incomplete months but also prevents recent hourly/daily source revisions
+from being reconciled before month-end. Explicit commissioning now supports
+`--defer-open-month` for NRT only:
+
+- Update the selected hourly collection, both affected UTC daily summaries,
+  and all four subdomain subsets through the existing acceptance gates.
+- Rebuild every affected closed-month summary as before. Only the current UTC
+  month may be deferred, and only when **no monthly product already exists** in
+  any domain. Missing past-month products still block publication.
+- Pin the monthly scope in candidate and no-op acceptance; revalidate it at
+  publication. Month rollover requires replanning, not silent omission.
+- Record `monthly_obligations` in publication reports and hourly receipts.
+  A deferred month is not a completed monthly product. The regular
+  `refresh_nrt_summaries.py` full-archive signature scan creates it once the month
+  is complete; no partial monthly file is published.
+
+This option is **not enabled in routine cron** pending real-data acceptance.
+Job **5261886** repairs/publishes October 5–6 with baseline reuse, after successful
+active forcing/subsetting job **5261881**. Job **5261888**, after successful
+5261886, tests November 5 with open-month deferral and candidate/no-op gates
+only: **no publication or live queue acknowledgement**. Both use 64 CPUs,
+120 GB requested scratch, and the bounded eight-hour limit without NRTRES.
+Their reports are `forcing/work/bounded-revision-queue/<job>/acceptance.json`.
+Job 5261888 passed its November 5 candidate/no-op test in 47m13s, with no
+production writes. The authorized follow-up campaign is
+`forcing/work/revision-backlog-drain/nrt-20261111/plan.json`: 34 frozen NRT
+obligations October 7–November 9, excluding the separate retro queue.
+
+- **5264854** acquires the missing November 10 PRISM ppt/tmin/tmax needed for the
+  November 9 constraint windows. Acquisition alone does not acknowledge revisions.
+- **5264855** publishes the existing November 5 candidate and checks repeat
+  publication. It retains originals and all existing source/acceptance gates.
+- **5264856**, dependent on successful 5264855, starts serialized two-date
+  batches with exact-input baseline reuse and explicit open-month deferral.
+  Each accepted, acknowledged batch submits its successor; errors stop the chain.
+  The campaign has a 20-batch safety ceiling, records per-batch receipts and a
+  final remaining-key report, and does not admit new dates outside its frozen scope.
+  Missing or superseded sources remain obligations, not silently acknowledged work.
+
+These are explicit backlog jobs, not a change to routine cron defaults. Adjacent
+dates share derived products, so publication is deliberately serialized. The
+November monthly obligation remains deferred until the month is complete; hourly,
+daily and all four domain subsets must pass before each date is acknowledged.
+Allow approximately 35–40 processing hours plus scheduler delays based on the
+recent closed/open-month tests; this is not a guaranteed completion time.
+The original two tests did not complete the backlog; the catch-up campaign above
+is now submitted, but model reconciliation is not. Keep model cron paused; after forcing
+reconciliation replay from a paired checkpoint at or before October 4 00 UTC
+to cover the earliest revised interval-end forcing, rather than relying on the
+normal 11-day window. Retain the needed restart pairs.
 
 Use the established cron environment wrapper, or source
 `bin/project_environment.sh` before invoking:

@@ -60,6 +60,9 @@ def cycle_window(cycle: str, today: date) -> tuple[str, date, date, int, int]:
         return "nrt", end - timedelta(days=9), end, 14, 8
     if cycle == "daily":
         end = today - timedelta(days=2)
+        from hydro_ops.forcing.prism_maturity import policy
+        if policy(Path(os.environ.get('HYDRO_OPS_PROJECT_ROOT', Path(__file__).resolve().parents[1]))).get('enabled'):
+            return "nrt", today - timedelta(days=11), end, 14, 12
         return "nrt", end - timedelta(days=199), end, 200, 12
     end = today - timedelta(days=183)
     return "retro", end - timedelta(days=44), end, 45, 8
@@ -196,7 +199,9 @@ def main() -> int:
             plan["recent_nrt_gfs_requested"] = bool(config.get("enabled"))
             plan["recent_nrt_gfs_active"] = activation(settings.project_root)
             if plan["recent_nrt_gfs_active"]:
-                recent_start = max(start, end - timedelta(days=config["lookback_days"] - 1))
+                from hydro_ops.forcing.prism_maturity import policy
+                lookback = 11 if policy(settings.project_root).get('enabled') else config['lookback_days']
+                recent_start = max(start, end - timedelta(days=lookback - 1))
                 plan["recent_nrt_start"] = recent_start.isoformat()
                 plan["recent_nrt_end"] = end.isoformat()
         if stream == 'nrt' and not args.revisions_only:

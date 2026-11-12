@@ -126,6 +126,10 @@ def run_staged_days(parent, days, progress=lambda record: None):
     if cpus < 128:
         raise ValueError('Staged revisions require the validated 128-CPU allocation')
     days = list(dict.fromkeys(days))
+    original_days = days.copy()
+    retained = [r for d in days if (r := getattr(parent, 'retain_legacy_constraint', lambda d: None)(d))]
+    retained_days = {r['day'] for r in retained}
+    days = [d for d in days if str(d) not in retained_days]
     started = time.monotonic()
     constrained = {d: all(p.is_file() for p in parent.prism_paths(d)) for d in days}
     result = {'workers': counts, 'baseline_days': [], 'windows': []}
@@ -142,7 +146,7 @@ def run_staged_days(parent, days, progress=lambda record: None):
         result['baseline_seconds'] = time.monotonic() - phase
         frozen = {d: prepared_baseline(parent.baseline, d) for d in needed}
         identities = {str(p): cycle.identity(p) for p, _ in frozen.values()}
-        changed, unchanged = [], []
+        changed, unchanged = [], retained
         for d in days:
             prism = parent.prism_paths(d)
             if all(p.is_file() for p in prism) != constrained[d]:
@@ -174,4 +178,4 @@ def run_staged_days(parent, days, progress=lambda record: None):
                 max_age_days=parent.config.get('window_cache_max_age_days', 14)))
     result['total_seconds'] = time.monotonic() - started
     by_day = {date.fromisoformat(r['day']): r for r in [*unchanged, *published]}
-    return [by_day[d] for d in days], result
+    return [by_day[d] for d in original_days], result

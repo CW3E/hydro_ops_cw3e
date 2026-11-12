@@ -206,6 +206,10 @@ def main() -> int:
     minimum = prism_root / "tmin" / prism_month / f"prism_tmin_us_25m_{stamp}.nc"
     maximum = prism_root / "tmax" / prism_month / f"prism_tmax_us_25m_{stamp}.nc"
     precipitation = prism_root / "ppt" / prism_month / f"prism_ppt_us_25m_{stamp}.nc"
+    from hydro_ops.forcing.prism_maturity import policy, release_ready
+    if (policy(settings.project_root).get('enabled') and args.stream == 'retro' and not args.prism_root
+            and (args.revision != 'stable' or not all(release_ready(p, 'retro') for p in (minimum, maximum, precipitation)))):
+        raise ValueError('Retro production requires actual PRISM daily grid count >= 8')
     for path in (minimum, maximum, precipitation):
         if not path.is_file():
             raise FileNotFoundError(f"Required PRISM input is missing: {path}")

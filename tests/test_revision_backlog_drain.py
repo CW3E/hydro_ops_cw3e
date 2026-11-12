@@ -2,6 +2,24 @@ import pytest
 from test_nwm_forcing_coordinator import load_script
 
 
+def test_explicit_open_month_scope(monkeypatch):
+    from pathlib import Path
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]/'bin'))
+    m = load_script('drain_revision_backlog.py')
+    state = {'pending': {f'nrt/2026-11-{d:02d}': {'stream': 'nrt', 'day': f'2026-11-{d:02d}'}
+                         for d in (1, 2, 3)}}
+    spec = {'stream': 'nrt', 'keys': ['nrt/2026-11-01', 'nrt/2026-11-03'],
+            'defer_open_month': True, 'reuse_baselines': True}
+    selected = m.explicit_selection(state, spec)
+    assert list(selected) == ['nrt/2026-11-01']  # Never include an unapproved intervening event.
+    cmd = m.batch_command(spec, selected)
+    assert '--defer-open-month' in cmd and '--reuse-baselines' in cmd and '--routine' not in cmd
+    spec['keys'] = list(state['pending'])
+    assert len(m.explicit_selection(state, spec)) == 2
+    with pytest.raises(ValueError, match='NRT only'):
+        m.explicit_selection(state, {**spec, 'stream': 'retro'})
+
+
 def test_backlog_cost_and_scope_bounds(monkeypatch):
     from pathlib import Path
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]/'bin'))

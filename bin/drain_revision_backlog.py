@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 from run_bounded_revision_queue import select_routine
@@ -20,6 +21,35 @@ def next_action(allowed, selected, completed, maximum):
     if completed >= maximum:
         return 'batch_limit'
     return 'run'
+
+
+def explicit_selection(state, spec):
+    """Frozen NRT catch-up scope; new arrivals never silently enter the campaign."""
+    if spec['stream'] != 'nrt':
+        raise ValueError('Open-month campaign is NRT only')
+    selected = {k: v for k, v in sorted(state.get('pending', {}).items())
+                if k in spec['keys'] and v['stream'] == 'nrt'}
+    selected = dict(list(selected.items())[:2])
+    if len(selected) == 2:
+        days = sorted(v['day'] for v in selected.values())
+        outside = any(v['stream'] == 'nrt' and days[0] <= v['day'] <= days[-1] and k not in selected
+                      for k, v in state.get('pending', {}).items())
+        if outside or (date.fromisoformat(days[-1])-date.fromisoformat(days[0])).days > 6:
+            selected = dict(list(selected.items())[:1])
+    return selected
+
+
+def batch_command(spec, selected):
+    cmd = [sys.executable, 'bin/run_bounded_revision_queue.py', '--stream', spec['stream'],
+           '--limit', '2', '--execute', '--publish']
+    if spec.get('defer_open_month'):
+        days = sorted(e['day'] for e in selected.values())
+        cmd += ['--start', days[0], '--end', days[-1], '--defer-open-month']
+    else:
+        cmd.append('--routine')
+    if spec.get('reuse_baselines'):
+        cmd.append('--reuse-baselines')
+    return cmd
 
 
 def main():
@@ -49,12 +79,14 @@ def main():
         try:
             queue = root/'forcing/status/prism-revisions/queue.json'
             state = json.loads(queue.read_text())
-            selected, deferred = select_routine(state, root, spec['stream'], 2)
+            if spec.get('defer_open_month'):
+                selected, deferred = explicit_selection(state, spec), []
+            else:
+                selected, deferred = select_routine(state, root, spec['stream'], 2)
             action = next_action(spec['keys'], selected, args.batch, spec['maximum_batches'])
             report.update(action=action, selected=list(selected), deferred=deferred)
             if action == 'run':
-                subprocess.run([sys.executable, 'bin/run_bounded_revision_queue.py', '--routine',
-                                '--stream', spec['stream'], '--limit', '2', '--execute', '--publish'],
+                subprocess.run(batch_command(spec, selected),
                                cwd=root, check=True)
                 receipt = json.loads((root/f'forcing/work/bounded-revision-queue/{report["job"]}/acceptance.json').read_text())
                 if receipt['status'] != 'passed' or {x['key'] for x in receipt['days']} != set(selected):

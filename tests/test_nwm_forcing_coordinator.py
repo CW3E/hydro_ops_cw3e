@@ -60,15 +60,19 @@ def load_slurm_script(name: str):
     return module
 
 
-def test_cycle_windows_are_nonoverlapping_at_daily_slot() -> None:
+@pytest.mark.parametrize('maturity_enabled', [False, True])
+def test_cycle_windows_are_nonoverlapping_at_daily_slot(monkeypatch, maturity_enabled) -> None:
     module = load_script("update_nwm_forcing.py")
+    # Never read mutable production activation state in this unit test.
+    monkeypatch.setattr('hydro_ops.forcing.prism_maturity.policy',
+                        lambda root: {'enabled': maturity_enabled})
     today = date(2026, 9, 3)
     assert module.cycle_window("six-hourly", today)[1:3] == (
         date(2026, 8, 23),
         date(2026, 9, 1),
     )
     assert module.cycle_window("daily", today)[1:3] == (
-        date(2026, 2, 14),
+        date(2026, 8, 23) if maturity_enabled else date(2026, 2, 14),
         date(2026, 9, 1),
     )
     assert module.cycle_window("monthly-retro", today)[1:3] == (

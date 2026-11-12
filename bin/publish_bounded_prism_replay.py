@@ -16,6 +16,7 @@ from hydro_ops.forcing.prism_revision_queue import acknowledge, source_signature
 from hydro_ops.forcing.rain_repair_writer import digest, fingerprint
 from hydro_ops.forcing.rain_summary_publication import publish_summary
 from hydro_ops.forcing.repair_transaction import atomic_json
+from hydro_ops.forcing.replay_month_scope import validate_scope
 from hydro_ops.forcing.temporal_summary import next_month, summarize, summary_path
 
 
@@ -41,7 +42,14 @@ def bounded_plan(root, workspace, stream, day):
             or noop.get('status') != 'passed' or not noop.get('noop')):
         raise ValueError('Replay and unchanged-repeat acceptance required')
     stages = load(workspace/'stages.json')['stages']
+    context = load(workspace/'context.json')
     months = sorted({d.replace(day=1) for d in (day-timedelta(days=1), day)})
+    scope = context.get('month_scope')
+    if scope is not None:
+        validate_scope(root, stream, day, scope)
+        if acceptance.get('month_scope') != scope or noop.get('month_scope') != scope:
+            raise ValueError('Monthly obligations missing from acceptance')
+        months = [date.fromisoformat(m) for m in scope['months']]
     monthly_stages = {'monthly'} if len(months) == 1 else {f'monthly/{m:%Y-%m}' for m in months}
     required = {'hourly', *monthly_stages, *(f'baseline/{day+timedelta(days=i)}' for i in (-1, 0, 1)),
                 *(f'window/{day+timedelta(days=i)}' for i in (0, 1)),
@@ -84,10 +92,13 @@ def bounded_plan(root, workspace, stream, day):
             raise ValueError(f'Initial bounded promotion requires existing regular targets: {p}')
     return {'stream': stream, 'day': str(day), 'candidate': str(candidate),
             **({'months': list(map(str, months))} if len(months) > 1 else {}),
+            **({'months': list(map(str, months)), 'month_scope': scope} if scope is not None else {}),
             'targets': {str(p): list(fingerprint(p)) for p in targets},
             'daily': list(map(str, daily)), 'month': str(month),
             'source_signatures': {k: v['signature'] for k, v in context['prism'].items()},
-            'scope': ('one existing calendar day; two daily summaries; one month; all four subdomains'
+            'scope': ('one existing calendar day; two daily summaries; current month deferred; all four subdomains'
+                      if not months else
+                      'one existing calendar day; two daily summaries; one month; all four subdomains'
                       if len(months) == 1 else
                       'one existing calendar day; two daily summaries; two months; all four subdomains')}
 
@@ -183,6 +194,9 @@ def main():
                        'replay_provenance': proof, 'derived_products_pending': True,
                        'as_of': datetime.now(UTC).isoformat(), 'verified': True,
                        'daily_file': str(target)}
+            if 'month_scope' in plan:
+                receipt['monthly_obligations'] = plan['month_scope']
+                report['monthly_obligations'] = plan['month_scope']
             metadata = target.with_name(target.name+'.manifest.json')
             atomic_json(metadata, receipt)
             if stream == 'nrt':
