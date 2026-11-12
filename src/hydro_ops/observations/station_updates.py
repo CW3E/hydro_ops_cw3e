@@ -10,7 +10,7 @@ from pathlib import Path
 from .station_store import StationTable, read_station, write_station
 
 
-def acquire_window(root, raw, previous, *, start, end):
+def acquire_window(root, raw, previous, *, start, end, request_control=None):
     """Fetch a short daily pilot window using existing provider normalization.
 
     Raw responses and receipt are staged before station publication. A fresh raw
@@ -46,7 +46,8 @@ def acquire_window(root, raw, previous, *, start, end):
             raise ValueError('USGS daily only')
         spec = previous.metadata['auxiliary']['station.json']
         features, sources = usgs_discharge.daily_pages(
-            root, raw, previous.metadata['station_id'], start, end)
+            root, raw, previous.metadata['station_id'], start, end,
+            **({'request_control': request_control} if request_control is not None else {}))
         records = usgs_discharge.normalize(features, spec, start, end)
     elif provider == 'cdec':
         swe = previous.metadata['product'] == 'snow_water_equivalent'

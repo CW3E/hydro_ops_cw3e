@@ -96,6 +96,22 @@ def _get_text(group, name):
     return [row[:int(n)].tobytes().decode('utf-8') for row, n in zip(data, lengths, strict=True)]
 
 
+def read_station_header(path):
+    """Acquisition context only, NOT a validated history or empty observation set.
+
+    Workers must still read/checksum/validate the full history before merging.
+    No observation arrays are read here.
+    """
+    with Dataset(path) as ds:
+        ds.set_auto_mask(False)
+        if ds.schema != SCHEMA:
+            raise ValueError('Unsupported station schema')
+        header = StationTable(json.loads(_get_text(ds.groups['metadata'], 'json')[0]),
+                              json.loads(ds.source_fields), [])
+        header.validate()
+        return header
+
+
 def read_station(path, *, start=None, end=None):
     """Read a whole table or inclusive provider-label interval, without UTC reinterpretation."""
     with Dataset(path) as ds:

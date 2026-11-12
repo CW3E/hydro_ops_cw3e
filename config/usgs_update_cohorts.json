@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "definition": "Union of current CNRFC and UCRB reporting-region inventories, intersected with the active USGS collection; remainder is the complement",
+  "inventories": [
+    {
+      "domain": "cnrfc",
+      "path": "observations/static/stations/usgs/streamflow_selections/20261028T181712Z-since-19790101-confirmed/domains/cnrfc/station_ids.txt",
+      "sha256": "6637b2f7b51b3df28dfa5748d07236957f05c1285bfb5f1f6c51e8ec9680c763"
+    },
+    {
+      "domain": "ucrb",
+      "path": "observations/static/stations/usgs/streamflow_selections/20261028T181712Z-since-19790101-confirmed/domains/ucrb/station_ids.txt",
+      "sha256": "914e046d2b2f6e2cdfc5babc9cdddf41c08b44c1e36154ad9fb73487b32fa06e"
+    }
+  ]
+}

@@ -86,12 +86,15 @@ def test_cron_template_uses_wrapper():
         if line and line[0].isdigit()
     ]
     # Monthly Retro is deliberately paused during forcing-only recommissioning.
-    assert len(entries) == 6
+    assert len(entries) == 8
     assert not any('--cycle monthly-retro ' in line for line in entries)
-    assert any(line.startswith('15 19 * * * ') and 'bin/submit_cdec_swe.py' in line
+    assert any(line.startswith('15 19 * * * ') and '--selection cdec-swe' in line
+               and '--optimized-coordinator' in line and '--swe-resolutions daily monthly' in line
                for line in entries)
-    assert any(line.startswith('0 19 * * * ') and 'bin/submit_cdec_fnf.py' in line
+    assert any(line.startswith('0 19 * * * ') and '--selection cdec-fnf' in line
                for line in entries)
+    assert any(line.startswith('30 19 * * * ') and '--usgs-scope regional' in line for line in entries)
+    assert any(line.startswith('0 21 * * 0 ') and '--usgs-scope remainder' in line for line in entries)
     assert any(line.startswith('0 18 * * * ') and
                'submit_stage4_revision_monitor.py --until 2026-11-30' in line
                for line in entries)

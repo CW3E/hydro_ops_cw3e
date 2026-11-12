@@ -46,7 +46,7 @@ def paced_request(root, session, url, interval=5):
     return response
 
 
-def daily_pages(root, raw, station, start, stop, *, limit=50000):
+def daily_pages(root, raw, station, start, stop, *, limit=50000, request_control=None):
     """Persist and checksum every page; follow next links to exhaustion."""
     session = requests.Session()
     session.mount('https://', HTTPAdapter(max_retries=Retry(
@@ -76,7 +76,7 @@ def daily_pages(root, raw, station, start, stop, *, limit=50000):
             if provenance['url'] != url or provenance['sha256'] != hashlib.sha256(payload).hexdigest():
                 raise ValueError('Cached daily response checksum/query mismatch')
         else:
-            response = paced_request(root, session, url)
+            response = (request_control or paced_request)(root, session, url)
             payload = response.content
             decoded = json.loads(payload)
             if decoded.get('type') != 'FeatureCollection' or not isinstance(decoded.get('features'), list):

@@ -4,6 +4,7 @@ CRON_TZ=UTC
 
 # NRT at 2.5 hours after each synoptic boundary; daily replaces six-hourly at 02:30 UTC.
 # Forcing-only operations: model hooks remain disabled pending separate authorization.
+# PRISM two-stage selection is activation-gated; see docs/prism_revision_policy.md.
 30 8,14,20 * * * /usr/bin/bash @WRAPPER@ bin/update_nwm_forcing.py --cycle six-hourly --skip-model-runs >> @LOG_ROOT@/nwm-cycle-six-hourly.log 2>&1
 30 2 * * * /usr/bin/bash @WRAPPER@ bin/update_nwm_forcing.py --cycle daily --skip-model-runs >> @LOG_ROOT@/nwm-cycle-daily.log 2>&1
 # Stable retrospective promotion; prefer ordinary resources, not NRTRES.
@@ -12,9 +13,11 @@ CRON_TZ=UTC
 # Read-only dashboard status.
 30 */2 * * * /usr/bin/bash @WRAPPER@ bin/report_forcing_status.py --format json --output forcing/status/forcing-status.json >> @LOG_ROOT@/forcing-status.log 2>&1
 # CNRFC catch-up is dependency-chained by the forcing cycles; no separate cron row.
-# CDEC FNF observations: daily full-history refresh at 19 UTC (11 PST), ordinary resources.
-0 19 * * * /usr/bin/bash @WRAPPER@ bin/submit_cdec_fnf.py >> @OBS_LOG_ROOT@/cdec-fnf-submit.log 2>&1
-# SWE: native sensor-3/82 updates; wait for accepted initial backfill; no NRTRES.
-15 19 * * * /usr/bin/bash @WRAPPER@ bin/submit_cdec_swe.py >> @OBS_LOG_ROOT@/cdec-swe-submit.log 2>&1
+# Observations: independent of forcing; ordinary resources, serialized station jobs.
+0 19 * * * /usr/bin/bash @WRAPPER@ bin/submit_station_updates.py --selection cdec-fnf --prepare-workers 4 >> @OBS_LOG_ROOT@/cdec-fnf-submit.log 2>&1
+15 19 * * * /usr/bin/bash @WRAPPER@ bin/submit_station_updates.py --selection cdec-swe --prepare-workers 4 --optimized-coordinator --swe-resolutions daily monthly >> @OBS_LOG_ROOT@/cdec-swe-submit.log 2>&1
+# CNRFC/UCRB reporting-region union daily; all remaining USGS stations Sunday.
+30 19 * * * /usr/bin/bash @WRAPPER@ bin/submit_station_updates.py --selection usgs --usgs-scope regional >> @OBS_LOG_ROOT@/usgs-regional-submit.log 2>&1
+0 21 * * 0 /usr/bin/bash @WRAPPER@ bin/submit_station_updates.py --selection usgs --usgs-scope remainder >> @OBS_LOG_ROOT@/usgs-remainder-submit.log 2>&1
 # Temporary Stage-IV revision observations through November 30, 2026; no production writes.
 0 18 * * * /usr/bin/bash @WRAPPER@ bin/submit_stage4_revision_monitor.py --until 2026-11-30 >> @LOG_ROOT@/stage4-revision-monitor.log 2>&1

@@ -1,39 +1,57 @@
 """Serialized, journaled live refresh of the active station collection."""
 import argparse
 import json
+import multiprocessing
 import os
 import time
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
+from contextlib import ExitStack
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
 
 from hydro_ops.download.cdec_fnf import PST
+from hydro_ops.download.usgs_request_control import ControlledRequest, ProviderPause
 from hydro_ops.forcing.repair_transaction import atomic_json
 from hydro_ops.observations.station_catalog import read_catalog
+from hydro_ops.observations.station_cohorts import filter_entries, scope_name
 from hydro_ops.observations.station_operations import (
     active_catalog,
     operation_lock,
     publish_window,
     recover_pending,
 )
-from hydro_ops.observations.station_store import read_station
+from hydro_ops.observations.station_preparation import PreparedPublisher, prepare_window
+from hydro_ops.observations.station_scheduling import pop_completed
+from hydro_ops.observations.station_store import read_station, read_station_header, write_station
 from hydro_ops.observations.station_submit import submit
 from hydro_ops.observations.station_updates import acquire_window, retain_omitted
 
 
-def selected(entry, selection):
+def selected(entry, selection, swe_resolutions=('daily', 'monthly')):
     return ((entry['provider'], entry['product']) == {
         'cdec-fnf': ('cdec', 'full_natural_flow'),
         'cdec-swe': ('cdec', 'snow_water_equivalent'),
-        'usgs': ('usgs', 'discharge')}[selection])
+        'usgs': ('usgs', 'discharge')}[selection]
+        and (selection != 'cdec-swe' or entry['resolution'] in swe_resolutions))
+
+
+def representative_entries(entries):
+    """Exercise the largest history in every native sensor/resolution group."""
+    groups = {}
+    for entry in entries:
+        key = entry['sensor'], entry['resolution']
+        if key not in groups or entry['rows'] > groups[key]['rows']:
+            groups[key] = entry
+    return list(groups.values())
 
 
 def resume_successes(path, selection, entries):
     """Skip only successful, still-current publications from the frozen cycle."""
     report = json.loads(path.read_text())
-    if report['selection'] != selection or report.get('representative'):
+    if report['selection'] != selection or report.get('representative') or report.get('limit'):
         raise ValueError('Resume selection mismatch')
     by_path = {e['path']:e for e in entries}
     accepted = {}
@@ -54,6 +72,10 @@ def resume_successes(path, selection, entries):
 
 def acquire_retry(root, task, old, start, end):
     """Bound transport retries; each response retains separate acquisition evidence."""
+    if old.metadata['provider'] == 'usgs':
+        control = ControlledRequest(root, task/'request-attempts.json')
+        # Exactly one wrapper invocation: retries and pacing belong to the controller.
+        return acquire_window(root, task/'raw-0', old, start=start, end=end, request_control=control)
     for attempt in range(2):
         try:
             return acquire_window(root,task/f'raw-{attempt}',old,start=start,end=end)
@@ -66,12 +88,33 @@ def acquire_retry(root, task, old, start, end):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--selection', required=True, choices=('cdec-fnf', 'cdec-swe', 'usgs'))
+    parser.add_argument('--usgs-scope', choices=('all', 'regional', 'remainder'), default='all')
     parser.add_argument('--representative', action='store_true', help='One history per sensor/resolution for commissioning')
     parser.add_argument('--resume-report',type=Path)
     parser.add_argument('--continuations',type=int,choices=range(4),default=0)
+    parser.add_argument('--prepare-workers', type=int, choices=(0, 1, 4), default=None,
+                        help='Defaults to four for USGS, zero for CDEC; acquisition remains serialized')
+    parser.add_argument('--limit', type=int, help='Bounded live commissioning; does not replace routine status')
+    parser.add_argument('--optimized-coordinator', action='store_true',
+                        help='Opt-in header-only acquisition context and ready-first collection')
+    parser.add_argument('--swe-resolutions', nargs='+', choices=('daily', 'monthly', 'hourly', 'event'),
+                        default=['daily', 'monthly'], help='CDEC SWE only; hourly/event are on demand')
     parser.add_argument('--max-hours',type=float,default=20,
                         help='Stop with durable remaining work before the 24-hour SLURM limit')
     args = parser.parse_args()
+    status_name = scope_name(args.selection, args.usgs_scope)
+    if args.prepare_workers is None:
+        args.prepare_workers = 4 if args.selection == 'usgs' else 0
+    if args.selection == 'usgs' and not os.environ.get('USGS_API_KEY'):
+        parser.error('USGS updates require USGS_API_KEY in the launcher environment')
+    if args.optimized_coordinator and not args.prepare_workers:
+        parser.error('Optimized coordinator requires process preparation workers')
+    if args.limit is not None and (args.limit < 1 or args.resume_report or args.continuations):
+        parser.error('Positive limit cannot be combined with resume or continuations')
+    if args.representative and (args.limit or args.resume_report or args.continuations):
+        parser.error('Representative commissioning must be a fresh bounded cycle')
+    if args.prepare_workers and args.continuations:
+        parser.error('Prepared-path continuations are not commissioned yet')
     root = Path(os.environ['HYDRO_OPS_PROJECT_ROOT']).resolve()
     if not 0 < args.max_hours <= 22:
         raise ValueError('Cycle budget must be between zero and 22 hours')
@@ -79,18 +122,26 @@ def main():
     work = root/'observations/work/station-cycles'/os.environ['SLURM_JOB_ID']
     work.mkdir(parents=True, exist_ok=False)
     report = {'status': 'running', 'selection': args.selection,
-              'representative': args.representative, 'stations': []}
-    with operation_lock(root):
+              'representative': args.representative, 'stations': [],
+              'prepare_workers': args.prepare_workers, 'limit': args.limit}
+    report['optimized_coordinator'] = args.optimized_coordinator
+    if args.selection == 'cdec-swe':
+        report['resolutions'] = sorted(set(args.swe_resolutions))
+    if args.selection == 'usgs':
+        report['usgs_scope'] = args.usgs_scope
+        report['acquisition_policy'] = 'keyed_single_worker_shared_pacing_bounded_retries_v1'
+    with operation_lock(root), ExitStack() as stack:
         recover_pending(root)
         catalog = active_catalog(root)
         if catalog is None:
             raise ValueError('Station collection not active')
-        entries = [e for e in read_catalog(catalog)['entries'] if selected(e, args.selection)]
+        entries = [e for e in read_catalog(catalog)['entries'] if selected(e, args.selection, args.swe_resolutions)]
+        if args.selection == 'usgs':
+            entries, report['cohort'] = filter_entries(root, entries, args.usgs_scope)
+        if args.limit:
+            entries = entries[:args.limit]
         if args.representative:
-            groups = {}
-            for entry in entries:
-                groups.setdefault((entry['sensor'], entry['resolution']), entry)
-            entries = list(groups.values())
+            entries = representative_entries(entries)
         report['planned'] = len(entries)
         stop = datetime.now(PST).date()-timedelta(days=1)
         resumed = {}
@@ -98,9 +149,48 @@ def main():
             path = args.resume_report.resolve()
             if not path.is_relative_to(root/'observations/work/station-cycles') or args.representative:
                 raise ValueError('Full station-cycle report required for resume')
+            prior = json.loads(path.read_text())
+            if prior.get('usgs_scope', 'all') != args.usgs_scope:
+                raise ValueError('Resume USGS scope mismatch')
+            if args.usgs_scope != 'all' and prior.get('cohort') != report['cohort']:
+                raise ValueError('Resume cohort changed')
             resumed,stop = resume_successes(path,args.selection,entries)
             report['resume_report'] = str(path)
         report['stop'] = str(stop)
+        pending = []
+        publisher = PreparedPublisher(root) if args.prepare_workers else None
+        pool = stack.enter_context(ProcessPoolExecutor(
+            max_workers=args.prepare_workers, mp_context=multiprocessing.get_context('spawn')
+        )) if args.prepare_workers else None
+
+        def finish_prepared():
+            future, entry, task, receipt, start, end = (
+                pop_completed(pending) if args.optimized_coordinator else pending.pop(0))
+            try:
+                prepared = future.result()
+            except Exception as error:  # noqa: BLE001 -- no publication attempted
+                report['stations'].append({'path': entry['path'], 'status': 'failed', 'error': str(error),
+                                           'task_index': int(task.name)})
+                atomic_json(work/'progress.json', report)
+                return
+            mark = time.monotonic()
+            try:
+                result = publisher.publish(prepared)
+            except Exception as error:
+                report.update(status='failed', fatal_error=str(error), fatal_station=entry['path'])
+                atomic_json(work/'acceptance.json', report)
+                raise
+            timings = prepared['timings'] | {'publication_seconds': time.monotonic()-mark}
+            omitted = prepared['omitted_keys_retained']
+            atomic_json(task/'publication.json', {**receipt, 'status': 'passed', 'result': result,
+                        'omitted_keys_retained': omitted, 'timings': timings})
+            report['stations'].append({'path': entry['path'], 'status': result['status'],
+                                       'task_index': int(task.name),
+                                       'start': str(start), 'end': str(end),
+                                       'sha256': result['entry']['sha256'],
+                                       'omitted_keys_retained': omitted, 'timings': timings})
+            atomic_json(work/'progress.json', report)
+
         for index, entry in enumerate(entries):
             if entry['path'] in resumed:
                 report['stations'].append(resumed[entry['path']])
@@ -110,19 +200,40 @@ def main():
                 break
             task = work/str(index)
             try:
-                old = read_station(catalog.parent/entry['path'])
+                context_started = time.monotonic()
+                old = (read_station_header if args.optimized_coordinator else read_station)(
+                    catalog.parent/entry['path'])
+                context_seconds = time.monotonic()-context_started
                 if entry['resolution'] == 'monthly':
                     end = stop.replace(day=1)-timedelta(days=1)
                     start = (end.replace(day=1)-timedelta(days=1)).replace(day=1)
                 else:
                     start, end = stop-timedelta(days=30), stop
+                mark = time.monotonic()
                 incoming, receipt = acquire_retry(root,task,old,start.isoformat(),end.isoformat())
+                receipt['acquisition_seconds'] = time.monotonic()-mark
+                receipt['coordinator_context_seconds'] = context_seconds
                 monthly = entry['resolution'] == 'monthly' and old.metadata.get('label_kind', 'period') == 'period'
                 lower, upper = (start.strftime('%Y-%m'), end.strftime('%Y-%m')) if monthly else (str(start), str(end))
-                incoming,omitted = retain_omitted(old,incoming,start=lower,end=upper)
+                if pool:
+                    incoming_path = task/'incoming.nc'
+                    write_station(incoming_path, incoming, lock_root=task/'locks')
+                    future = pool.submit(prepare_window, root, entry, incoming_path, lower, upper, task/'prepared')
+                    pending.append((future, entry, task, receipt, start, end))
+                else:
+                    incoming,omitted = retain_omitted(old,incoming,start=lower,end=upper)
+            except ProviderPause as error:
+                report['provider_pause'] = str(error)
+                # Leave this and subsequent stations unattempted for an explicit resume.
+                atomic_json(work/'progress.json', report)
+                break
             except Exception as error:  # noqa: BLE001 -- isolate acquisition/validation failures, no writes yet
                 report['stations'].append({'path': entry['path'], 'status': 'failed', 'error': str(error)})
                 atomic_json(work/'progress.json',report)
+                continue
+            if pool:
+                if len(pending) >= args.prepare_workers:
+                    finish_prepared()
                 continue
             try:
                 result = publish_window(root, entry, incoming, lower, upper, task)
@@ -137,20 +248,28 @@ def main():
                                        'sha256':result['entry']['sha256'],
                                        'omitted_keys_retained':omitted})
             atomic_json(work/'progress.json', report)
+        while pending:
+            finish_prepared()
         attempted = {r['path'] for r in report['stations']}
         report['remaining'] = [e['path'] for e in entries if e['path'] not in attempted]
         report['counts'] = dict(Counter(r['status'] for r in report['stations']))
         report['failed_paths'] = [r['path'] for r in report['stations'] if r['status'] == 'failed']
         report['warning_paths'] = [r['path'] for r in report['stations'] if r.get('omitted_keys_retained')]
         report['resumed_count'] = sum(bool(r.get('resumed')) for r in report['stations'])
+        report['elapsed_seconds'] = time.monotonic()-started
         report['status'] = ('partial' if report['remaining'] or report['failed_paths'] else
                             'passed_with_warnings' if report['warning_paths'] else 'passed')
         atomic_json(work/'acceptance.json', report)
-        atomic_json(root/'observations/status/stations'/f'{args.selection}-latest.json',
-                    {k:v for k,v in report.items() if k != 'stations'} | {'report':str(work/'acceptance.json')})
+        if (not args.limit and not args.representative
+                and (args.selection != 'cdec-swe' or set(args.swe_resolutions) == {'daily', 'monthly'})):
+            atomic_json(root/'observations/status/stations'/f'{status_name}-latest.json',
+                        {k:v for k,v in report.items() if k != 'stations'} | {'report':str(work/'acceptance.json')})
     if report['remaining'] and args.continuations:
         report['continuation'] = submit(root,args.selection,resume_report=work/'acceptance.json',
-                                        continuations=args.continuations-1,after_job=os.environ['SLURM_JOB_ID'])
+                                        continuations=args.continuations-1,after_job=os.environ['SLURM_JOB_ID'],
+                                        prepare_workers=args.prepare_workers,
+                                        swe_resolutions=args.swe_resolutions, usgs_scope=args.usgs_scope,
+                                        optimized_coordinator=args.optimized_coordinator)
         atomic_json(work/'acceptance.json',report)
     print(json.dumps(report, indent=2))
     if report['status'] not in ('passed','passed_with_warnings'):
