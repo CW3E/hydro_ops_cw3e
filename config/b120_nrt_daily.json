@@ -1,8 +1,14 @@
 {
   "enabled": true,
   "rewind_days": 11,
+  "catchup_acceptance": {
+    "report": "nwm/runs/b120/nrt/cycles/job-5271590/cycle.json",
+    "job_id": "5271590",
+    "start": "2026-09-01 00:00:00",
+    "end": "2026-11-12 00:00:00"
+  },
   "mpi_ranks": 32,
-  "daily_acceptance": "nwm/runs/b120/nrt/cycles/job-5069197/cycle.json",
+  "daily_acceptance": "nwm/runs/b120/nrt/cycles/job-5271587/cycle.json",
   "archive_gate": "nwm/status/b120-nrt-catchup/b120/handoff-acceptance.json",
   "note": "Require promoted NRT archive and a passed domain-specific daily replay test before activation. Paired daily 00 UTC checkpoints; retention remains plan-only."
 }

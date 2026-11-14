@@ -1,6 +1,12 @@
 {
   "enabled": true,
   "rewind_days": 11,
+  "catchup_acceptance": {
+    "report": "nwm/runs/cnrfc/nrt/cycles/job-5271018/cycle.json",
+    "job_id": "5271018",
+    "start": "2026-10-04 00:00:00",
+    "end": "2026-11-12 00:00:00"
+  },
   "archive_gate": "nwm/status/cnrfc/grid-promotion/handoff-acceptance.json",
   "grid_version": "cnrfc_hu18_v1",
   "mask_sha256": "9ea3c1eac13b7eb6bae5594cd7b8f95e9fe2f56b1e16031b2d7f6900d0d7d79c",

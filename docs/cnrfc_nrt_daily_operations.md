@@ -1,5 +1,33 @@
 # CNRFC daily NRT model cycle
 
+## Current reactivation gate — November 12, 2026
+
+Catch-up job **5271018** replays October 4–November 12 00 UTC (39 days), using
+64 MPI ranks, 120 GB requested scratch, a two-hour limit, paired daily checkpoints
+and a pinned forcing snapshot. October 5–10 forcing changed after the prior
+accepted model run and lies outside the ordinary 11-day rewind. Recent November
+revisions remain within that rolling window; the new PRISM maturity policy does
+not itself refresh model state.
+
+The daily cron entry permits model submission, but CNRFC's configured
+`catchup_acceptance` gate fails closed until this exact job's `cycle.json` and
+publication transaction both report successful completion. It checks the domain,
+option-1 restart mode, requested interval, checkpoint count and publication count;
+test-only, incomplete, failed or rolled-back runs cannot unlock scheduling.
+No completion is claimed merely because the job was submitted. This is historical
+activation evidence; subsequent normal runs may replace its published files.
+
+After the gate passes, the next daily forcing cycle submits CNRFC only after its
+successful forcing revision, summary and subset dependencies. Routine rewind
+remains 11 days. B120, Yampa and UCRB were initially left disabled during this
+change; their subsequent accepted catch-ups and user-approved activation are
+recorded in [subdomain operations](subdomain_daily_model_operations.md).
+Six-hourly cycles still skip models; monthly retro remains paused. No separate
+model cron row or cron change from a compute node is needed. Saved schedules and
+the login1 crontab are updated together, preserving unrelated live entries.
+Before/after installation snapshots are retained in
+`forcing/status/cron/20261112-cnrfc-catchup-{before,after}.crontab`.
+
 ## Expanded-grid transition
 
 The user approved [canonical expanded-CNRFC promotion](cnrfc_grid_promotion.md)

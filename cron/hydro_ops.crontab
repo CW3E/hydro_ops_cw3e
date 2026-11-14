@@ -13,9 +13,9 @@ CRON_TZ=UTC
 # All cycles extend latest hours first with required GFS northern fallback.
 # Only daily continues into broader source refresh, revisions, and summaries.
 # PRISM two-stage selection is activation-gated; see docs/prism_revision_policy.md.
-# Forcing-only operations: model hooks remain disabled pending separate authorization.
+# Daily model hooks for all four subdomains require their accepted catch-up gates.
 30 8,14,20 * * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/update_nwm_forcing.py --cycle six-hourly --skip-model-runs >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/nwm-cycle-six-hourly.log 2>&1
-30 2 * * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/update_nwm_forcing.py --cycle daily --skip-model-runs >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/nwm-cycle-daily.log 2>&1
+30 2 * * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/update_nwm_forcing.py --cycle daily >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/nwm-cycle-daily.log 2>&1
 
 # Stable retrospective promotion after PRISM's normal mid-month revision cycle. Cleanup is a
 # dependency-gated final stage and never runs inside parallel PRISM workers.

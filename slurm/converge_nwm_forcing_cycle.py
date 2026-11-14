@@ -377,7 +377,7 @@ def main() -> int:
                 cycle_id=os.environ['SLURM_JOB_ID'],
                 partition=state['partition'], account=state.get('account', ''))
             state['subdomain_model_cycles'] = {}
-            for domain in ('b120', 'yampa'):
+            for domain in ('b120', 'ucrb', 'yampa'):
                 if state.get('skip_model_runs', False):
                     state['subdomain_model_cycles'][domain] = {'status': 'disabled_for_forcing_cycle_test'}
                     continue

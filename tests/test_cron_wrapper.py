@@ -113,12 +113,23 @@ def test_nrt_cron_utc_schedule():
         assert len(daily) == len(fast) == 1
         assert daily[0].split()[:5] == ["30", "2", "*", "*", "*"]
         assert fast[0].split()[:5] == ["30", "8,14,20", "*", "*", "*"]
-        assert '--skip-model-runs' in daily[0]
+        assert '--skip-model-runs' not in daily[0]
         assert '--skip-model-runs' in fast[0]
         assert not any('--cycle monthly-retro ' in line for line in entries)
         paused = [line for line in text.splitlines()
                   if line.startswith('#0 18 18 ') and '--cycle monthly-retro ' in line]
         assert len(paused) == 1
+
+
+def test_daily_model_reactivation_is_gated_for_all_subdomains():
+    cnrfc = json.loads((ROOT/'config/cnrfc_nrt_daily.json').read_text())
+    assert cnrfc['enabled'] and cnrfc['catchup_acceptance']['report']
+    assert cnrfc['rewind_days'] == 11
+    for domain in ('b120', 'yampa', 'ucrb'):
+        config = json.loads((ROOT/f'config/{domain}_nrt_daily.json').read_text())
+        assert config['enabled'] and config['catchup_acceptance']['report']
+        assert config['daily_acceptance'] and config['rewind_days'] == 11
+        assert config['mpi_ranks'] == (64 if domain == 'ucrb' else 32)
 
 
 @pytest.mark.skipif(

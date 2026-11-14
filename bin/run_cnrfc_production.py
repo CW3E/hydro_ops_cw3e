@@ -88,6 +88,10 @@ def publication_roots(root, campaign, stream='retro', domain='cnrfc'):
             raise ValueError('Invalid repaired retro domain/stream')
         return root / 'nwm/outputs' / domain / stream, root / 'nwm/restarts' / domain / stream
     if domain != 'cnrfc':
+        if domain == 'ucrb' and stream == 'nrt' and campaign == 'nrt_continuation_v1':
+            from hydro_ops.wrf_hydro.nrt_schedule import require_nrt_publication
+            require_nrt_publication(root, domain)
+            return root/'nwm/outputs/ucrb/nrt', root/'nwm/restarts/ucrb/nrt'
         if (domain in ('cnrfc_hu18_v1', 'yampa', 'b120') and stream == 'nrt'
                 and campaign == 'nrt_continuation_v1'):
             promotion = root / 'nwm/status' / domain / 'nrt-promotion/promotion.json'
@@ -142,7 +146,7 @@ def run(root, year, campaign='production_1979_1981_v1', archive_gate=None, end_d
         cycle_workspace=None, stream_lock=None, forcing_root=None, domain='cnrfc', continuation_end=None,
         refresh_workspace=None):
     refresh = campaign == 'thermal_refresh_2026_v1'
-    isolated_nrt = domain in ('cnrfc_hu18_v1', 'yampa', 'b120') and stream == 'nrt'
+    isolated_nrt = domain in ('cnrfc_hu18_v1', 'yampa', 'b120', 'ucrb') and stream == 'nrt'
     if forcing_root is not None and not refresh and (stream != 'nrt' or (cycle_workspace is None and not isolated_nrt)):
         raise ValueError('Explicit forcing snapshots require staged NRT execution')
     first, end = simulation_window(year, end_date, start_date)
@@ -186,10 +190,17 @@ def run(root, year, campaign='production_1979_1981_v1', archive_gate=None, end_d
         if not authorized or archive_gate is None:
             raise ValueError('HU18 pilot requires its warm-start gate and an authorized year')
         gate = json.loads(archive_gate.read_text())
-        if (gate.get('status') != 'passed' or gate.get('domain') != domain
+        if domain == 'ucrb' and stream == 'nrt':
+            config = json.loads((root/'config/ucrb_nrt_daily.json').read_text())
+            if (archive_gate.resolve() != (root/config['archive_gate']).resolve()
+                    or cycle_workspace is None or forcing_root is None
+                    or gate.get('status') != 'passed' or gate.get('domain') != domain
+                    or gate.get('restart_equivalence') != 'passed'):
+                raise ValueError('UCRB daily continuation requires its accepted refresh and staged snapshot')
+        elif (gate.get('status') != 'passed' or gate.get('domain') != domain
                 or not gate.get('spinup_warm_start_verified')):
             raise ValueError('HU18 spin-up warm-start gate has not passed')
-        if isolated_nrt and (not gate.get('nrt_handoff_verified') or forcing_root is None):
+        if isolated_nrt and domain != 'ucrb' and (not gate.get('nrt_handoff_verified') or forcing_root is None):
             raise ValueError('Isolated NRT requires a verified handoff and pinned forcing snapshot')
     if stream == 'nrt' and (start_date is None or end_date is None or initial_restart_dir is None):
         raise ValueError('NRT requires explicit start/end dates and initial restart directory')

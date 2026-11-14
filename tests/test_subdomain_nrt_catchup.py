@@ -15,7 +15,7 @@ def test_isolated_nrt_paths_do_not_change_retro_or_old_cnrfc(monkeypatch, tmp_pa
         with pytest.raises(ValueError, match='Unsupported'):
             module.publication_roots(tmp_path, 'production_v1', 'nrt', domain)
     assert module.publication_roots(tmp_path, 'nrt_continuation_v1', 'nrt')[0] == tmp_path / 'nwm/outputs/cnrfc/nrt'
-    with pytest.raises(ValueError, match='Unsupported'):
+    with pytest.raises(ValueError, match='publication evidence missing'):
         module.publication_roots(tmp_path, 'nrt_continuation_v1', 'nrt', 'ucrb')
 
 

@@ -33,7 +33,7 @@ def require_corrected_replay(acceptance):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--domain', choices=('cnrfc', 'b120', 'yampa'), default='cnrfc')
+    parser.add_argument('--domain', choices=('cnrfc', 'b120', 'yampa', 'ucrb'), default='cnrfc')
     parser.add_argument('--test', action='store_true', help='Publish only to an isolated test mirror')
     parser.add_argument('--end-date')
     parser.add_argument('--rewind-days', type=int, default=11)
@@ -61,9 +61,8 @@ def main():
             parser.error('Subdomain daily replay requires --snapshot-forcing')
         from run_b120_production import approved
         approved(root, domain)
-        promotion = root / f'nwm/status/{domain}/nrt-promotion/promotion.json'
-        if json.loads(promotion.read_text()).get('status') != 'complete':
-            raise ValueError('Complete NRT promotion required before daily replay')
+        from hydro_ops.wrf_hydro.nrt_schedule import require_nrt_publication
+        require_nrt_publication(root, domain)
     configuration = json.loads((root / f'config/{domain}_nrt_daily.json').read_text())
     if domain != 'cnrfc' and not args.test:
         from hydro_ops.wrf_hydro.nrt_schedule import require_daily_acceptance
@@ -106,6 +105,8 @@ def main():
         if configuration.get('archive_gate'):
             gate = root / configuration['archive_gate']
         report['mask_sha256'] = json.loads(gate.read_text()).get('mask_sha256')
+        if domain == 'ucrb':
+            report['mask_sha256'] = json.loads((root/'nwm/static/domains/ucrb/manifest.json').read_text())['mask_sha256']
         try:
             initial = Path(plan['initial_restart_dir'])
             cursor = start

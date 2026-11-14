@@ -35,7 +35,7 @@ def checkpoints(root):
 
 
 def discover_plan(root, end=None, rewind_days=11, domain='cnrfc'):
-    if domain not in ('cnrfc', 'b120', 'yampa'):
+    if domain not in ('cnrfc', 'b120', 'yampa', 'ucrb'):
         raise ValueError('Unsupported daily model domain')
     forcing = root / f'forcing/outputs/{domain}/nrt/hourly'
     paths = sorted(forcing.glob('*/*/*.LDASIN_DOMAIN1'))

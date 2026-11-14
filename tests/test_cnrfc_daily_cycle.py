@@ -130,3 +130,34 @@ def test_enabled_hook_submits_once_and_defers_active_job(tmp_path, monkeypatch):
     assert '--snapshot-forcing' in result['command']
     assert submit_if_enabled(tmp_path, ['126'])['status'] == 'already_submitted'
     assert len(calls) == 2
+
+
+def test_catchup_activation_requires_complete_canonical_publication(tmp_path, monkeypatch):
+    from hydro_ops.wrf_hydro.nrt_schedule import catchup_accepted
+
+    gate = {'report': 'nwm/runs/cnrfc/nrt/cycles/job-123/cycle.json',
+            'job_id': '123', 'start': '2026-10-04', 'end': '2026-11-12'}
+    config = tmp_path/'config/cnrfc_nrt_daily.json'
+    config.parent.mkdir()
+    config.write_text(json.dumps({'enabled': True, 'catchup_acceptance': gate}))
+    monkeypatch.setattr('subprocess.check_output', lambda *a, **kw: pytest.fail('Premature submission'))
+    assert submit_if_enabled(tmp_path, ['456'])['status'] == 'disabled_pending_catchup_publication'
+    path = tmp_path/gate['report']
+    path.parent.mkdir(parents=True)
+    journal = path.parent/'publication/transaction.json'
+    journal.parent.mkdir()
+    report = {'status': 'complete', 'test': False, 'domain': 'cnrfc', 'rst_typ': 1,
+              'job_id': '123', 'start': gate['start'], 'end': gate['end'],
+              'checkpoint_count': 39, 'forcing_snapshot': 'pinned',
+              'journal': str(journal), 'published_files': 1}
+    path.write_text(json.dumps(report))
+    for state in ('prepared', 'publishing', 'rolled_back'):
+        journal.write_text(json.dumps({'status': state, 'files': [{}]}))
+        assert not catchup_accepted(tmp_path, 'cnrfc', gate)
+    journal.write_text(json.dumps({'status': 'complete', 'files': [{}]}))
+    assert catchup_accepted(tmp_path, 'cnrfc', gate)
+    for changed in ({'test': True}, {'domain': 'yampa'}, {'rst_typ': 0},
+                    {'job_id': '999'}, {'checkpoint_count': 38}, {'published_files': 2},
+                    {'status': 'failed'}, {'start': '2026-10-05'}):
+        path.write_text(json.dumps(report | changed))
+        assert not catchup_accepted(tmp_path, 'cnrfc', gate)

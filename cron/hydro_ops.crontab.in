@@ -3,10 +3,10 @@
 CRON_TZ=UTC
 
 # NRT at 2.5 hours after each synoptic boundary; daily replaces six-hourly at 02:30 UTC.
-# Forcing-only operations: model hooks remain disabled pending separate authorization.
+# Daily model hooks for all four subdomains require their accepted catch-up gates.
 # PRISM two-stage selection is activation-gated; see docs/prism_revision_policy.md.
 30 8,14,20 * * * /usr/bin/bash @WRAPPER@ bin/update_nwm_forcing.py --cycle six-hourly --skip-model-runs >> @LOG_ROOT@/nwm-cycle-six-hourly.log 2>&1
-30 2 * * * /usr/bin/bash @WRAPPER@ bin/update_nwm_forcing.py --cycle daily --skip-model-runs >> @LOG_ROOT@/nwm-cycle-daily.log 2>&1
+30 2 * * * /usr/bin/bash @WRAPPER@ bin/update_nwm_forcing.py --cycle daily >> @LOG_ROOT@/nwm-cycle-daily.log 2>&1
 # Stable retrospective promotion; prefer ordinary resources, not NRTRES.
 # Paused pending exact-source revision queue reconciliation.
 #0 18 18 * * /usr/bin/bash @WRAPPER@ bin/update_nwm_forcing.py --cycle monthly-retro --skip-model-runs >> @LOG_ROOT@/nwm-cycle-retro.log 2>&1

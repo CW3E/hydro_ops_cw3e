@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "rewind_days": 11,
+  "catchup_acceptance": {
+    "report": "nwm/runs/ucrb/nrt/cycles/job-5271592/cycle.json",
+    "job_id": "5271592",
+    "start": "2026-09-01 00:00:00",
+    "end": "2026-11-12 00:00:00"
+  },
+  "mpi_ranks": 64,
+  "daily_acceptance": "nwm/runs/ucrb/nrt/cycles/job-5271589/cycle.json",
+  "canonical_acceptance": "nwm/status/thermal_refresh_2026_v1/ucrb/nrt/acceptance.json",
+  "archive_gate": "nwm/status/thermal_refresh_2026_v1/ucrb/nrt/gate.json",
+  "note": "Daily continuation enabled after accepted restart test and catch-up publication. Canonical thermal-refresh provenance and catch-up gates remain enforced; retention stays plan-only."
+}

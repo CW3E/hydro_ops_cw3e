@@ -119,6 +119,40 @@ def test_forcing_only_cycle_suppresses_all_model_branches(monkeypatch):
     assert all(v['status'] == 'disabled_for_forcing_cycle_test' for v in state['subdomain_model_cycles'].values())
 
 
+def test_daily_ucrb_dependency_and_independent_model_failure(monkeypatch):
+    import subprocess
+
+    from hydro_ops.forcing import subdomain_sync
+    from hydro_ops.wrf_hydro import nrt_schedule
+
+    root = Path(__file__).resolve().parents[1]
+    tree = ast.parse((root/'slurm/converge_nwm_forcing_cycle.py').read_text())
+    function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
+    block = next(n for n in function.body if isinstance(n, ast.If)
+                 and 'subdomain_model_cycles' in ast.unparse(n))
+    monkeypatch.setattr(subdomain_sync, 'submit_daily_branches',
+                        lambda *a, **kw: {'b120': '501', 'ucrb': '502', 'yampa': '503'})
+    calls = {}
+    def submit(root, dependencies, domain):
+        calls[domain] = dependencies
+        if domain == 'ucrb':
+            raise ValueError('UCRB gate not yet accepted')
+        return {'status': 'submitted'}
+    monkeypatch.setattr(nrt_schedule, 'submit_if_enabled', submit)
+    state = {'cycle': 'daily', 'stream': 'nrt', 'cnrfc_sync_job_id': '456',
+             'partition': 'shared-128'}
+    namespace = {'state': state, 'project': root, 'downstream_after': '345',
+                 'os': SimpleNamespace(environ={'SLURM_JOB_ID': '123'}),
+                 'subprocess': subprocess, 'submit_if_enabled': submit}
+    function.body = [block]
+    exec(compile(ast.Module(body=[function], type_ignores=[]), '<daily-domains>', 'exec'), namespace)
+    namespace['main']()
+    assert calls == {'b120': ['501', '345', '123'], 'ucrb': ['502', '345', '123'],
+                     'yampa': ['503', '345', '123']}
+    assert 'ucrb' in state['subdomain_model_submission_errors']
+    assert state['subdomain_model_cycles']['yampa']['status'] == 'submitted'
+
+
 def test_incremental_skip_is_metadata_only(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'bin'))
     tool = importlib.import_module('backfill_cnrfc_forcing')
