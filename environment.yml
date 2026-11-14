@@ -36,4 +36,4 @@ dependencies:
   - pytest
   - ruff
   - pip:
-      - -e .
+      - -e .[web]

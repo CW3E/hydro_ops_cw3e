@@ -8,6 +8,15 @@ remains on login2. Future edits to the saved files still require reinstallation.
 
 ## Forcing recommissioning after thermal refresh (November 2026)
 
+**Current update, November 12:** observation schedules are installed as described
+in [station operations](station_collection_operations.md). The daily forcing row
+now permits the CNRFC model hook, gated on catch-up job 5271018's accepted canonical
+publication. B120, Yampa and UCRB are now also enabled after accepted catch-ups
+and explicit approval; see [subdomain operations](subdomain_daily_model_operations.md).
+Six-hourly still skips models and
+monthly Retro remains paused. See [CNRFC reactivation](cnrfc_nrt_daily_operations.md#current-reactivation-gate--november-12-2026).
+The November 10 notes below describe the earlier forcing-only installation.
+
 On November 10, 2026, after the daily and six-hourly live tests passed, the
 forcing-only daily, six-hourly and status entries were re-enabled on **login1**.
 The installed daily and six-hourly commands explicitly include `--skip-model-runs`;
@@ -138,3 +147,17 @@ native durations, incremental windows and historical revision policy. These
 saved observation rows still require manual installation on login1.
 Observe the first live cycle and its dependent jobs after installation; successful
 environment tests are not an end-to-end production validation.
+
+### Dependent web raster publication
+
+Web publication has no separate cron row. The daily NRT forcing controller can
+submit one dependent CNRFC/UCRB web job after both domains' exact forcing subset
+and daily model jobs succeed. Six-hourly cycles do not trigger this hook.
+`config/web_daily.json` controls submission (`enabled`, `mode`), while
+`config/web_globus.json:production_enabled` controls live transfer advancement.
+Initial automatic commissioning enables submissions only after its full live
+test passes; inspect the activation receipt before assuming it is enabled.
+See [web raster publication](web_raster_publication.md) for commissioning evidence,
+job-specific acceptance, failure recovery and disable switches. No crontab
+reinstallation is needed for this dependent hook. Missing/deferred model branches
+defer the web update rather than using unverified older model results.

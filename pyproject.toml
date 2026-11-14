@@ -9,6 +9,9 @@ description = "Meteorological data acquisition and hydrologic modeling workflows
 requires-python = ">=3.11"
 dependencies = ["requests>=2.31"]
 
+[project.optional-dependencies]
+web = ["globus-sdk>=4,<5"]
+
 [project.scripts]
 hydro-ops = "hydro_ops.cli:main"
 

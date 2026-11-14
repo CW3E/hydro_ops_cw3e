@@ -391,6 +391,13 @@ def main() -> int:
         except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
             state['subdomain_sync_submission_error'] = str(error)
     if state['stream'] == 'nrt' and state['cycle'] == 'daily':
+        from hydro_ops.web.schedule import submit_if_enabled as submit_web
+        try:
+            state['web_daily_cycle'] = submit_web(project, state, os.environ['SLURM_JOB_ID'])
+        except (OSError, ValueError, RuntimeError, KeyError, subprocess.CalledProcessError) as error:
+            # Web publication cannot invalidate successful forcing/model submission.
+            state['web_daily_submission_error'] = str(error)
+    if state['stream'] == 'nrt' and state['cycle'] == 'daily':
         # Historical catch-up must not gate today's NRT model run. Submit it last
         # so the existing serialization queue gives NRT synchronization priority.
         try:
