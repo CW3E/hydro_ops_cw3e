@@ -116,3 +116,82 @@ def render(path, values, x, y, extent, size, legend):
         if not actual <= allowed:
             raise ValueError('Rendered image contains colors outside its legend')
         return {'visiblePixels': int(np.count_nonzero(pixels[..., 3])), 'width': im.width, 'height': im.height}
+
+
+def legends_v3():
+    result = legends()
+    for rule in result.values():
+        rule['colors'] = ['#00000000' if c.endswith('00') else c for c in rule['colors']]
+        for b, color in zip(rule['bins'], rule['colors'], strict=True):
+            b['color'] = color
+        rule['background'] = {'color': '#00000000', 'meaning': 'Outside product domain or projected grid'}
+        rule['displayResampling'] = 'nearest-neighbor'
+        rule['transparencySemantics'] = 'All zero-alpha pixels share transparent black; qualityCounts distinguishes causes. PNG RGB values do not encode quality.'
+    return result
+
+
+def render_v3(path, values, x, y, extent, size, legend, *, domain_mask,
+              source_valid=None, invalid=None, suppressed=None):
+    """Rasterize categories once, then map to exact RGBA and count quality classes.
+
+    Source-cell and rendered-pixel counts are distinct. Pixel classes use exactly
+    the same native cell footprints as the displayed colors, not area weights.
+    """
+    a = np.ma.asarray(values, dtype=float).filled(np.nan)
+    inside = np.asarray(domain_mask, bool)
+    valid = np.isfinite(a) if source_valid is None else np.asarray(source_valid, bool)
+    bad = np.zeros(a.shape, bool) if invalid is None else np.asarray(invalid, bool)
+    excluded = np.zeros(a.shape, bool) if suppressed is None else np.asarray(suppressed, bool)
+    if any(v.shape != a.shape for v in (inside, valid, bad, excluded)):
+        raise ValueError('Quality/mask shape mismatch')
+    finite = np.isfinite(a)
+    if legend['thresholdUnit'] == '%':
+        bad = bad | (finite & ((a < 0) | (a > 100)))
+    elif legend['thresholdUnit'] == 'mm':
+        bad = bad | (finite & (a < 0))
+    valid = valid & ~bad
+    codes = np.ones(a.shape, dtype='u1')  # Missing source estimate
+    codes[bad] = 2
+    codes[valid & ~finite] = 4  # Valid source, rank unavailable
+    bins = np.searchsorted(legend['thresholds'], a, side='right')
+    codes[valid & finite] = (5+bins[valid & finite]).astype('u1')
+    codes[valid & excluded] = 3
+    codes[~inside] = 0
+    colors = np.array([list(bytes.fromhex(c[1:])) for c in legend['colors']], dtype='u1')
+    colors[colors[:, 3] == 0] = 0
+    palette = np.vstack([np.zeros((5, 4), dtype='u1'), colors])
+    # Encode cell categories as opaque exact-byte red values during projection.
+    cmap = ListedColormap([(i/255, 0, 0, 1) for i in range(len(palette))])
+    fig = Figure(figsize=(size[0]/100, size[1]/100), dpi=100, facecolor=(0, 0, 0, 0))
+    canvas = FigureCanvasAgg(fig)
+    ax = fig.add_axes([0, 0, 1, 1], frameon=False); ax.set_axis_off()
+    ax.pcolormesh(x, y, codes, cmap=cmap, norm=BoundaryNorm(np.arange(len(palette)+1)-.5, len(palette)),
+                  shading='flat', antialiased=False, edgecolors='none', snap=False)
+    ax.set_xlim(extent[0], extent[2]); ax.set_ylim(extent[1], extent[3])
+    canvas.draw()
+    encoded = np.asarray(canvas.buffer_rgba()).copy(); fig.clear()
+    pixels = np.where(encoded[..., 3] == 0, 0, encoded[..., 0])
+    if pixels.max() >= len(palette) or not set(np.unique(encoded[..., 3])) <= {0, 255}:
+        raise ValueError('Unexpected rasterized quality code')
+    rgba = palette[pixels]
+    Image.fromarray(rgba).save(path)
+
+    def counts(c):
+        hist = np.bincount(c.ravel(), minlength=len(palette))
+        hidden = int(hist[5:][colors[:, 3] == 0].sum())
+        visible = int(hist[5:][colors[:, 3] > 0].sum())
+        return {'total': int(c.size), 'outsideDomain': int(hist[0]), 'insideDomain': int(c.size-hist[0]),
+                'missingEstimate': int(hist[1]), 'invalidEstimate': int(hist[2]),
+                'validEstimate': int(hist[3:].sum()), 'suppressedBySweCutoff': int(hist[3]),
+                'statisticUnavailable': int(hist[4]), 'validIntentionallyHidden': hidden,
+                'visible': visible}
+
+    source_counts, pixel_counts = counts(codes), counts(pixels)
+    with Image.open(path) as check:
+        np.testing.assert_array_equal(np.asarray(check), rgba)
+    return {'visiblePixels': pixel_counts['visible'], 'width': size[0], 'height': size[1],
+            'qualityCounts': {'sourceCells': source_counts, 'imagePixels': pixel_counts,
+                'countSemantics': 'Disjoint inside-domain categories: missingEstimate, invalidEstimate, suppressedBySweCutoff, statisticUnavailable, validIntentionallyHidden, visible. validEstimate is the sum of the last four; counts are not area fractions.'},
+            'imageStatus': 'visible_data' if pixel_counts['visible'] else
+                'valid_data_not_highlighted' if pixel_counts['validEstimate'] > pixel_counts['statisticUnavailable']
+                else 'no_displayable_estimates'}
