@@ -148,6 +148,7 @@ def advance(project, path, client, *, retry_failed=False, get=requests.get):
         label = f'hydro-ops ordered test {plan["id"]} g{generation} {role}'
         if role == 'cleanup':
             data = globus_sdk.DeleteData(config['destination_collection_id'], label=label,
+                notify_on_succeeded=False, notify_on_failed=True, notify_on_inactive=False,
                 submission_id=current['submission_id'], recursive=False, interpret_globs=False,
                 ignore_missing=True)
             for name in obsolete:
@@ -155,6 +156,7 @@ def advance(project, path, client, *, retry_failed=False, get=requests.get):
             result = client.submit_delete(data)
         else:
             data = globus_sdk.TransferData(source_endpoint=config['source_collection_id'],
+                notify_on_succeeded=False, notify_on_failed=True, notify_on_inactive=False,
                 destination_endpoint=config['destination_collection_id'], label=label,
                 submission_id=current['submission_id'], sync_level='checksum', verify_checksum=True,
                 delete_destination_extra=False)

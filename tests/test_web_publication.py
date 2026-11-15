@@ -20,6 +20,7 @@ class Client:
         return {'value': str(uuid.uuid4())}
 
     def submit_transfer(self, data):
+        assert (data['notify_on_succeeded'], data['notify_on_failed'], data['notify_on_inactive']) == (False, True, False)
         self.calls.append(data)
         if self.timeout:
             self.timeout = False
@@ -30,6 +31,7 @@ class Client:
         return {'task_id': str(uuid.uuid4())}
 
     def submit_delete(self, data):
+        assert (data['notify_on_succeeded'], data['notify_on_failed'], data['notify_on_inactive']) == (False, True, False)
         assert data['recursive'] is False and data['interpret_globs'] is False
         self.calls.append(data)
         for row in data['DATA']:

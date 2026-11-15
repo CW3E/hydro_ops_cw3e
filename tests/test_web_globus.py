@@ -41,6 +41,7 @@ class Client:
         return {'value': 'e18363c8-14d0-11ef-989e-0affc319aa91'}
 
     def submit_transfer(self, payload):
+        assert (payload['notify_on_succeeded'], payload['notify_on_failed'], payload['notify_on_inactive']) == (False, True, False)
         self.payloads.append(payload)
         if self.fail_once:
             self.fail_once = False

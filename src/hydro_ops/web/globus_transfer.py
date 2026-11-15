@@ -154,6 +154,7 @@ def submit_test(project, path, client):
             atomic_json(path.with_name('state.json'), state)
         config = plan['config']
         data = globus_sdk.TransferData(source_endpoint=config['source_collection_id'],
+            notify_on_succeeded=False, notify_on_failed=True, notify_on_inactive=False,
             destination_endpoint=config['destination_collection_id'], submission_id=state['submission_id'],
             label='hydro-ops isolated web test '+plan['id'], sync_level='checksum',
             verify_checksum=True, preserve_timestamp=True, delete_destination_extra=False)

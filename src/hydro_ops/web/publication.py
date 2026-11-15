@@ -218,6 +218,7 @@ def advance(project, path, client, *, enabled=False, retry_failed=False, get=req
                 save()
             if role == 'cleanup':
                 data = globus_sdk.DeleteData(config['destination_collection_id'],
+                    notify_on_succeeded=False, notify_on_failed=True, notify_on_inactive=False,
                     submission_id=current['submission_id'], recursive=False, interpret_globs=False,
                     ignore_missing=True, label=f'hydro-ops {plan["id"]} cleanup')
                 for name in plan['obsolete']:
@@ -225,6 +226,7 @@ def advance(project, path, client, *, enabled=False, retry_failed=False, get=req
                 result = client.submit_delete(data)
             else:
                 data = globus_sdk.TransferData(source_endpoint=config['source_collection_id'],
+                    notify_on_succeeded=False, notify_on_failed=True, notify_on_inactive=False,
                     destination_endpoint=config['destination_collection_id'], submission_id=current['submission_id'],
                     label=f'hydro-ops {plan["id"]} {role}', sync_level='checksum', verify_checksum=True,
                     delete_destination_extra=False)

@@ -1,5 +1,13 @@
 # Web raster pilot publication
 
+Globus email policy: all repository transfer and remote-cleanup submissions,
+including commissioning tests, request failure notifications only
+(`notify_on_failed=true`, `notify_on_succeeded=false`,
+`notify_on_inactive=false`). Use the same settings for ad-hoc station pilot
+transfers. Inactive tasks still require monitoring through task status reports.
+This submission policy does not alter already-submitted tasks or account-wide
+notification preferences.
+
 `bin/publish_web_raster_pilot.py` creates a self-contained transfer directory at
 `web/publications/pilot-<job>/`. This is a presentation export, not a replacement
 for scientific NetCDF archives. The directory combines forcing and model maps;
