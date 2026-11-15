@@ -18,6 +18,8 @@ def submit(root, selection, *, dry_run=False, resume_report=None, continuations=
     status_name = scope_name(selection, usgs_scope)
     if not swe_resolutions or set(swe_resolutions) - {'daily', 'monthly', 'hourly', 'event'}:
         raise ValueError('Invalid SWE resolutions')
+    if selection == 'cdec-swe' and set(swe_resolutions) - {'daily', 'monthly'}:
+        raise ValueError('CDEC SWE policy permits only Snow Course monthly and Snow Pillow daily')
     if prepare_workers is None:
         prepare_workers = 4 if selection == 'usgs' else 0
     if prepare_workers not in (0, 1, 4) or (prepare_workers and continuations):

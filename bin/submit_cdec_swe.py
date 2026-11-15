@@ -10,6 +10,7 @@ from hydro_ops.download.cdec_fnf import PST, write_json
 from hydro_ops.download.cdec_swe import digest, series, tasks_for
 from hydro_ops.observations.station_operations import active_catalog
 from hydro_ops.observations.station_submit import submit
+from hydro_ops.observations.swe_policy import load_policy
 
 
 def main():
@@ -40,6 +41,9 @@ def main():
         payload = metadata.read_bytes()
         metadata_sha = digest(payload)
         specifications = series(json.loads(payload))
+        allowed, swe_policy = load_policy(root)
+        specifications = [s for s in specifications
+                          if (s['station_id'], str(s['sensor_number']), s['resolution']) in allowed]
         if args.mode != 'smoke':
             gate = json.loads((status / 'latest-smoke.json').read_text())
             if gate.get('status') != 'passed' or gate['metadata_sha256'] != metadata_sha:
@@ -50,14 +54,14 @@ def main():
                 raise ValueError('Matching historical SWE backfill must pass before routine updates')
         tasks = tasks_for(root, specifications, datetime.now(PST).date(), args.mode)
         if args.dry_run:
-            print(json.dumps({'mode': args.mode, 'series': len(specifications), 'tasks': len(tasks),
+            print(json.dumps({'mode': args.mode, 'swe_policy': swe_policy, 'series': len(specifications), 'tasks': len(tasks),
                               'metadata': str(metadata), 'shards': 8 if args.mode == 'backfill' else 1})); return
         journal = status / 'submission.json'
         if journal.exists() and json.loads(journal.read_text()).get('status') == 'submission_uncertain':
             raise RuntimeError('Review uncertain previous submission before retry')
         state = status / (args.mode + '-' + datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ'))
         state.mkdir(exist_ok=False)
-        plan = {'mode': args.mode, 'metadata': str(metadata.relative_to(root)), 'metadata_sha256': metadata_sha,
+        plan = {'mode': args.mode, 'swe_policy': swe_policy, 'metadata': str(metadata.relative_to(root)), 'metadata_sha256': metadata_sha,
                 'series_count': len(specifications), 'tasks': tasks,
                 'shards': 8 if args.mode == 'backfill' else 1, 'refresh': args.refresh or args.mode != 'backfill'}
         write_json(state / 'plan.json', plan)

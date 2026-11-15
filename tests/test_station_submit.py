@@ -17,8 +17,8 @@ def test_swe_resolution_policy(tmp_path, monkeypatch):
     monkeypatch.setattr(mod.subprocess, 'check_output', lambda *a, **k: '')
     cmd = mod.submit(tmp_path, 'cdec-swe', dry_run=True)['command']
     assert cmd[-3:] == ['--swe-resolutions', 'daily', 'monthly']
-    cmd = mod.submit(tmp_path, 'cdec-swe', dry_run=True, swe_resolutions=['hourly', 'event'])['command']
-    assert cmd[-3:] == ['--swe-resolutions', 'event', 'hourly']
+    with pytest.raises(ValueError, match='CDEC SWE policy'):
+        mod.submit(tmp_path, 'cdec-swe', dry_run=True, swe_resolutions=['hourly', 'event'])
     with pytest.raises(ValueError, match='resolutions'):
         mod.submit(tmp_path, 'cdec-swe', dry_run=True, swe_resolutions=[])
     cmd = mod.submit(tmp_path, 'cdec-swe', dry_run=True, prepare_workers=4,

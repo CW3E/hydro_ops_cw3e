@@ -137,7 +137,16 @@ for memory and a conservative 24-hour limit are used; this first implementation
 processes histories serially. No NRTRES is requested. The existing USGS provider
 rate limiter remains in effect.
 
-Routine CDEC SWE cycles now select **daily and monthly records only** (currently
+Current SWE eligibility is now stricter: **listed Snow Courses, sensor 3/monthly;
+listed Snow Pillows, sensor 82/daily**. See the
+[CDEC-confirmed policy](cdec_swe_observations.md#current-collection-policy--cdec-clarification-november-15-2026).
+It currently selects 391 archived series (260 courses and 131 pillows); BKL
+monthly was excluded after the user confirmed no data exist. BKL daily pillow
+data remain eligible. Old reports cannot be resumed across this policy change. No cron
+schedule change is needed. The following counts and commissioning notes are
+historical, not current selection instructions.
+
+Previously, CDEC SWE cycles selected **daily and monthly records only** (then
 284 daily and 808 monthly histories). Existing hourly/event archives are retained
 but no longer refreshed by the routine cron command. The running all-resolution
 commissioning cycle 5260662 was subsequently canceled at user request; its accepted
@@ -149,14 +158,14 @@ resume verifies current catalog hashes before reusing successes. The frozen
 acquisition endpoint remains 2026-11-10. No cron reinstall is needed: the saved
 `submit_cdec_swe.py` command delegates to the updated selection defaults.
 
-Explicit on-demand updates use:
+Historical on-demand command (now rejected by the SWE policy; do not run):
 
 ```bash
 bash bin/run_cron.sh bin/submit_station_updates.py --selection cdec-swe \
   --swe-resolutions hourly event --dry-run
 ```
 
-Remove `--dry-run` to submit. These are recent-window refreshes, not arbitrary
+Do not remove `--dry-run` or submit this obsolete scope. These were recent-window refreshes, not arbitrary
 historical backfills. On-demand scopes retain the same collection locks and
 duplicate-job protection, and do not replace the routine SWE latest-status report.
 Reports record the selected resolutions. Resuming an old all-resolution report

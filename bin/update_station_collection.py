@@ -28,6 +28,7 @@ from hydro_ops.observations.station_scheduling import pop_completed
 from hydro_ops.observations.station_store import read_station, read_station_header, write_station
 from hydro_ops.observations.station_submit import submit
 from hydro_ops.observations.station_updates import acquire_window, retain_omitted
+from hydro_ops.observations.swe_policy import filter_swe
 
 
 def selected(entry, selection, swe_resolutions=('daily', 'monthly')):
@@ -136,6 +137,8 @@ def main():
         if catalog is None:
             raise ValueError('Station collection not active')
         entries = [e for e in read_catalog(catalog)['entries'] if selected(e, args.selection, args.swe_resolutions)]
+        if args.selection == 'cdec-swe':
+            entries, report['swe_policy'] = filter_swe(root, entries)
         if args.selection == 'usgs':
             entries, report['cohort'] = filter_entries(root, entries, args.usgs_scope)
         if args.limit:
@@ -150,6 +153,8 @@ def main():
             if not path.is_relative_to(root/'observations/work/station-cycles') or args.representative:
                 raise ValueError('Full station-cycle report required for resume')
             prior = json.loads(path.read_text())
+            if args.selection == 'cdec-swe' and prior.get('swe_policy') != report['swe_policy']:
+                raise ValueError('Resume SWE policy mismatch; start a fresh cycle')
             if prior.get('usgs_scope', 'all') != args.usgs_scope:
                 raise ValueError('Resume USGS scope mismatch')
             if args.usgs_scope != 'all' and prior.get('cohort') != report['cohort']:

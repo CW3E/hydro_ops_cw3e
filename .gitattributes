@@ -1,0 +1,2 @@
+# Preserve provider-supplied station-list bytes: policy provenance hashes these files.
+config/cdec_swe_stations/*.csv -text whitespace=cr-at-eol
