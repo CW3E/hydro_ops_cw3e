@@ -91,7 +91,7 @@ def destination_key(config):
                            config['destination_root'].rstrip('/')).encode()).hexdigest()
 
 
-def prepare(project, folder, inventory, config):
+def prepare(project, folder, inventory, config, *, incremental=False):
     """Read-only remote planning; predecessor comes only from accepted local receipts."""
     project, folder = Path(project).resolve(), Path(folder).resolve()
     validate_inventory(inventory)
@@ -115,6 +115,9 @@ def prepare(project, folder, inventory, config):
         plan = {'schema': 'hydro_ops_deployment_v1', 'id': run_id, 'config': config,
                 'source': str(folder.relative_to(project)), 'inventory': inventory,
                 'previous_id': previous['id'] if previous else None, 'obsolete': obsolete}
+        if incremental:
+            old = {r['path']: r['sha256'] for r in previous['inventory']['files']} if previous else {}
+            plan['changed_paths'] = [r['path'] for r in inventory['files'] if old.get(r['path']) != r['sha256']]
         atomic_json(work / 'plan.json', plan)
         atomic_json(work / 'state.json', {'plan_sha256': digest(work / 'plan.json'),
                                         'completed': [], 'phase': 'planned'})
@@ -128,6 +131,10 @@ def validate(project, path):
     if plan['schema'] != 'hydro_ops_deployment_v1' or digest(path) != state['plan_sha256']:
         raise ValueError('Frozen deployment plan changed')
     validate_inventory(plan['inventory'])
+    if 'changed_paths' in plan:
+        names = {r['path'] for r in plan['inventory']['files']}
+        if len(set(plan['changed_paths'])) != len(plan['changed_paths']) or set(plan['changed_paths']) - names:
+            raise ValueError('Invalid incremental path selection')
     for name in plan['obsolete']:
         relative(name)
     source_path(project, Path(project) / plan['source'], plan['config']['source_project_root'])
@@ -165,6 +172,11 @@ def advance(project, path, client, *, enabled=False, retry_failed=False, get=req
             return state
         if (accepted['id'] if accepted else None) != plan['previous_id']:
             raise ValueError('Stale predecessor: replan against latest accepted deployment')
+        if 'changed_paths' in plan:
+            old = {r['path']: r['sha256'] for r in accepted['inventory']['files']} if accepted else {}
+            expected = {r['path'] for r in plan['inventory']['files'] if old.get(r['path']) != r['sha256']}
+            if set(plan['changed_paths']) != expected:
+                raise ValueError('Incremental selection differs from accepted predecessor')
         if not owner:
             atomic_json(owner_path, {'id': plan['id'], 'plan': str(path.resolve().relative_to(project))})
 
@@ -180,7 +192,9 @@ def advance(project, path, client, *, enabled=False, retry_failed=False, get=req
 
         phases = ('payload', 'metadata', 'catalog', 'cleanup')
         role = phases[len(state['completed'])]
-        rows = [r for r in plan['inventory']['files'] if r['role'] == role]
+        selected = [r for r in plan['inventory']['files']
+                    if 'changed_paths' not in plan or r['path'] in plan['changed_paths']]
+        rows = [r for r in selected if r['role'] == role]
         current = state.setdefault('current', {'role': role})
         if current.get('task_id'):
             current['status'] = client.get_task(current['task_id'])['status']
@@ -204,7 +218,7 @@ def advance(project, path, client, *, enabled=False, retry_failed=False, get=req
                         raise ValueError('Deleted file still visible')
         elif rows or (role == 'cleanup' and plan['obsolete']):
             if role == 'cleanup':
-                verify(plan['inventory']['files'])
+                verify(selected)
                 atomic_json(path.with_name('deletion-manifest.json'), {
                     'paths': [child_path(config['destination_root'], n) for n in plan['obsolete']],
                     'destination_collection_id': config['destination_collection_id'], 'recursive': False})
@@ -241,7 +255,7 @@ def advance(project, path, client, *, enabled=False, retry_failed=False, get=req
             save()
             return state
         if role == 'cleanup':
-            verify(plan['inventory']['files'])
+            verify(selected)
             atomic_json(accepted_path, {'id': plan['id'], 'inventory': plan['inventory'],
                                        'plan': str(path.resolve().relative_to(project)),
                                        'published_at': datetime.now(UTC).isoformat()})

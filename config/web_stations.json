@@ -1,0 +1,16 @@
+{
+  "products": {
+    "cdec-fnf": {
+      "enabled": true,
+      "mode": "publish",
+      "bootstrap_release": "web/publications/observations/cdec-fnf-20261115-r1",
+      "bootstrap_https_report": "web/work/observations/publish-cdec-fnf-20261115-r1/https-verification.json"
+    },
+    "cdec-swe": {
+      "enabled": true,
+      "mode": "publish",
+      "bootstrap_release": "web/publications/observations/cdec-swe-20261115-r1",
+      "bootstrap_https_report": "web/work/observations/publish-cdec-swe-20261115-r1/https-verification.json"
+    }
+  }
+}

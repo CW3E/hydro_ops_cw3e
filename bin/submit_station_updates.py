@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from hydro_ops.observations.station_submit import submit
+from hydro_ops.web.station_schedule import submit as submit_web
 
 
 def main():
@@ -22,12 +23,16 @@ def main():
     parser.add_argument('--swe-resolutions', nargs='+', choices=('daily', 'monthly', 'hourly', 'event'),
                         default=['daily', 'monthly'], help='CDEC SWE only; hourly/event are on demand')
     args = parser.parse_args()
-    print(json.dumps(submit(Path(os.environ['HYDRO_OPS_PROJECT_ROOT']), args.selection,
+    root = Path(os.environ['HYDRO_OPS_PROJECT_ROOT'])
+    result = submit(root, args.selection,
                             dry_run=args.dry_run, resume_report=args.resume_report,
                             continuations=args.continuations, prepare_workers=args.prepare_workers,
                             limit=args.limit, after_success=args.after_success,
                             representative=args.representative, swe_resolutions=args.swe_resolutions,
-                            optimized_coordinator=args.optimized_coordinator, usgs_scope=args.usgs_scope)))
+                            optimized_coordinator=args.optimized_coordinator, usgs_scope=args.usgs_scope)
+    if not args.dry_run and not args.limit and not args.representative:
+        result['web_publication'] = submit_web(root, args.selection, result)
+    print(json.dumps(result))
 
 
 if __name__ == '__main__':

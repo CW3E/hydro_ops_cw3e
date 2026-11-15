@@ -1,5 +1,9 @@
 # CDEC SWE station and sensor metadata
 
+Daily incremental web publication now follows station acquisition; see
+[the shared SWE/FNF operational procedure](cdec_observations.md#daily-station-web-publication-swe-and-fnf)
+for change detection, stale-station retention, Globus ordering, status and retries.
+
 ## Current collection policy — CDEC clarification, November 15, 2026
 
 Unsupported SWE combinations are retired from the active station collection by

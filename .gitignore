@@ -19,6 +19,8 @@ nwm/**
 
 # Observation downloads and generated metadata inventories
 /web/publications/
+/web/status/
+/web/work/
 observations/**
 !observations/**/
 !observations/**/.gitkeep

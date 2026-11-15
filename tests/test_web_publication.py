@@ -184,3 +184,29 @@ def test_raster_inventory_excludes_internal_files(tmp_path):
     (domain / 'image.png').write_bytes(b'changed')
     with pytest.raises(ValueError, match='checksum mismatch'):
         raster_inventory(tmp_path)
+
+
+def test_incremental_transfer_only_changed_paths(setup):
+    root, config, client, plan, step = setup
+    first = plan(1)
+    for _ in range(8):
+        step(first)
+    original = json.loads(first.read_text())
+    folder = root/'g1'
+    atomic_json(folder/'metadata.json', {'updated': True})
+    inv = original['inventory']
+    for row in inv['files']:
+        row.update(sha256=digest(folder/row['path']), bytes=(folder/row['path']).stat().st_size)
+    second = prepare(root, folder, inv, config, incremental=True)
+    assert json.loads(second.read_text())['changed_paths'] == ['metadata.json']
+    count = len(client.calls)
+    client.status = 'FAILED'
+    step(second)
+    step(second)
+    assert step(second)['phase'] == 'blocked'
+    step(second, retry_failed=True)
+    client.status = 'SUCCEEDED'
+    for _ in range(8):
+        state = step(second)
+    assert state['phase'] == 'published'
+    assert all([r['destination_path'] for r in c['DATA']] == ['/web/metadata.json'] for c in client.calls[count:])

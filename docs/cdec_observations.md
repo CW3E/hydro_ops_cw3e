@@ -1,5 +1,102 @@
 # CDEC full-natural-flow station metadata
 
+## Daily station web publication (SWE and FNF)
+
+`config/web_stations.json` enables separate incremental web followers for CDEC
+FNF and SWE. Existing daily `bin/submit_station_updates.py` cron commands submit
+a two-CPU, one-hour web job after acquisition. No additional cron installation
+is needed. Acquisition is scheduled at 19:00 UTC (FNF) and 19:15 UTC (SWE);
+publication follows acquisition and queueing. USGS publication is not included.
+
+The dependency is `afterany`: a completed partial acquisition can publish
+verified successful stations while retaining old public histories for failures.
+Each follower reads the exact job-specific
+`observations/work/station-cycles/<job>/acceptance.json`, not a mutable latest
+report. Missing/incomplete receipts cannot authorize publication. Limited and
+representative acquisition tests do not spawn public updates.
+
+Source SHA-256 pins, current station catalog entries, and per-station acquisition
+verdicts determine changes. Only changed, accepted station histories are read
+and exported. Unchanged gzip CSVs are hard-linked into immutable local snapshots;
+revisions replace links atomically. No-change cycles make no transfers. Provider
+flags, fixed-PST labels, native reporting intervals and display rules are retained.
+Failed stations retain old bytes with `updateStatus: stale-retained` and
+collection-level `publication.staleSeries` metadata. Membership changes require
+explicit review rather than silently adding/removing stations.
+
+Globus transfers changed files only: data first, collection metadata second,
+root catalog third, then explicitly inventoried obsolete files. Changed public
+files pass HTTPS checksum verification; unchanged files rely on the previous
+accepted deployment, avoiding full-history HTTP downloads every day. There is
+no remote directory mirroring or historical release duplication. Public roots
+remain `observations/cdec/swe/` and `observations/cdec/fnf/`. Globus email remains
+failure-only.
+
+Operational paths:
+
+- `web/publications/observations/<selection>-<release>/`: immutable local snapshot.
+- `web/status/stations/<selection>/accepted.json`: accepted release and source pins.
+- `web/status/stations/<selection>/pending.json`: frozen resumable deployment.
+- `web/status/stations/<selection>/latest.json`: latest cycle result.
+- `web/status/stations/submissions/<selection>/<acquisition-job>/submission.json`:
+  deduplicated follower submission receipt.
+- `web/work/deployments/<id>/`: transfer plan and phase/task receipts.
+- `observations/logs/web-station-cycle-<job>.out`: scheduler log.
+
+Set `enabled: false` to stop new followers and live advances. `mode: plan-only`
+allows local preparation without transfer; `mode: publish` also requires an
+enabled product and explicit `--publish`. This scoped product gate overrides
+the generic observations transport's disabled flag only for its own destination.
+Endpoints/path mappings stay in `config/web_globus_observations.json` and
+credentials remain outside the repository. Do not edit a pending plan's config.
+
+Resume without redownloading observations:
+
+```bash
+source bin/project_environment.sh
+sbatch slurm/update_web_stations.sh --selection cdec-fnf \
+  --report observations/work/station-cycles/ACQUISITION_JOB/acceptance.json \
+  --publish --retry-failed
+```
+
+Use `cdec-swe` and its own receipt for SWE. A pending deployment finishes first
+without rebuilding; a newer acquisition is picked up on the next invocation.
+Retain pending snapshots/receipts. Submission uncertainty requires inspecting
+recorded jobs before retrying. Product locks and durable destination ownership
+prevent duplicate writers. The publisher never modifies station archives.
+
+Commissioning: no-change jobs 5325865/5325866 completed in 2/12 seconds.
+Jobs 5325868/5325869 forced AMF FNF and BCH SWE re-exports in about 2/10 seconds
+of processing; all 47 FNF and 391 SWE gzip assets matched accepted bytes. These
+tests made no remote or source writes.
+
+Live metadata-only commissioning jobs 5325870 (FNF) and 5325871 (SWE) published
+successfully in 43/51 seconds. Each changed nine metadata/catalog files, reused
+all CSV assets, and required no remote deletions. Transfer phases and public
+HTTPS checks passed. Both daily followers are enabled; no crontab was edited or
+installed as part of this change.
+
+## Current public FNF snapshot
+
+Following user acceptance of the v2 web-map pilot, the collection was promoted
+to `https://cw3e.ucsd.edu/hydro/hydro_ops/observations/cdec/fnf/catalog.json`.
+Local release: `web/publications/observations/cdec-fnf-20261115-r1/`.
+It retains all 47 gzip CSVs byte-for-byte from v2, with production metadata,
+release identifiers and `hydro-ops-observation-index-v1` catalog schema.
+Daily and monthly layer paths remain `daily/collection.json` and
+`monthly/collection.json`; scientific semantics and stable collection IDs are
+unchanged. This is the bootstrap release for the daily cycle above; consult its
+accepted receipt for the latest release rather than assuming this dated path.
+
+Receipts: `web/work/observations/publish-cdec-fnf-20261115-r1/`.
+All three transfer phases succeeded (assets, collections, catalog). Independent
+HTTPS verification passed for all 60 files, their SHA-256/byte counts, CORS,
+and gzip CSV decoding (47 assets / 267,026 records).
+After that gate, an explicit 60-file cleanup plan removed only the remote
+`observations/pilots/cdec-fnf-full-history-pilot-20261115-v2/` files. Empty pilot
+directories may remain. The local pilot and receipts are retained for recovery;
+SWE and other collections were untouched. Globus notifications are failure-only.
+
 After the [common station collection](station_collection_operations.md)
 activation gate passes, `bin/submit_cdec_fnf.py` routes updates to that collection.
 Legacy CSV/downloader descriptions below document retained bootstrap data;
@@ -8,6 +105,110 @@ unchanged. Cron installation is separate.
 
 For the separate, station-wide sensor-3/82 SWE inventory, see
 [CDEC SWE observations](cdec_swe_observations.md).
+
+## Full-history web publication pilot
+
+`bin/build_web_fnf_pilot.py` exports the current accepted station archive into
+two independent layers: `daily/` (sensor 8, native CFS converted to m³/s) and
+`monthly/` (sensor 65, native acre-feet converted to m³). Monthly volume is
+not recomputed from daily flow. All 24 configured stations must be represented
+monthly, and all except TNL daily; sensor 290 is excluded.
+
+```bash
+source bin/project_environment.sh
+sbatch slurm/build_web_fnf_pilot.sh --output \
+  web/publications/observations/<new-fnf-release>
+```
+
+Each station/layer has one full-history `history.csv.gz`, deterministic gzip
+level 6. `catalog.json` links the two `collection.json` manifests; each layer
+also includes station GeoJSON, provider historical notes, reference records,
+and an acceptance inventory with compressed-byte sizes/checksums. Decompress
+before CSV parsing. Raw columns and flags remain unchanged; plot
+`fnf_display_si` against `timestamp_pst`. Preserve fixed-PST reporting dates and
+months rather than converting to browser-local or NWM UTC-day intervals.
+Missing/sentinel/nonnumeric values remain blank. Negative naturalized estimates
+are **retained**, not subject to the SWE nonnegative display rule. Provider
+flags are retained without exclusion; no maximum cutoff or interpolation is
+applied. FNF is calculated naturalized flow, not measured regulated discharge.
+
+The build is read-only: pin catalog entries, verify each source checksum and
+identity, read back every compressed CSV exactly, and recheck all FNF entries
+and hashes before accepting. Unrelated USGS catalog updates do not invalidate
+the snapshot; any FNF change fails acceptance. It does not acquire/recover
+the updater's transaction lock or modify source data. Local releases are never
+overwritten. A partial failed folder without top-level passed `acceptance.json`
+is not publishable.
+
+First full pilot: job **5324270**, output
+`web/publications/observations/cdec-fnf-full-history-pilot-20261115-v1/`.
+It completed in **19 seconds on two allocated CPUs** with passed local acceptance:
+23 daily assets / 233,297 records and 24 monthly assets / 33,729 records.
+Independent post-job checking verified all 59 inventoried files and every gzip
+asset's record counts and feature joins. Data assets total **8.55 MB** compressed
+(61.11 MB plain CSV, including display columns); the complete package is
+**8.85 MB**. Daily negative estimates (6,304) and the one monthly negative estimate
+remain visible with review status; missing rows remain missing. Focused tests:
+26 passed; Ruff and diff checks passed. Browser, HTTPS,
+and scientific acceptance are separate. No Globus transfer, remote cleanup, or
+routine publication is enabled by this command. FNF-specific reuse terms remain
+unverified; do not inherit the snow dataset's licensing statement.
+
+### FNF pilot v2 metadata refinements
+
+V2 uses `source.kind=derived_estimate`, distinguishing daily rates and monthly
+volumes as provider products rather than instruments. Secondary timestamps are
+labeled **Provider observation timestamp**, with unverified meaning; only
+reporting dates/months drive plots. Values, negative-estimate retention, units,
+and gzip data layout are unchanged.
+
+`acceptance.json` distinguishes `source_catalog_sha256` (the internal station
+catalog snapshot, with its path) from `publication_catalog_sha256` (the published
+catalog). The latter must match both the actual bytes and its `files[]` entry.
+Bootstrap ingestion receipts are explicitly historical; current coverage/counts
+are in `publishedSnapshot`. Supply `--update-report <passed-FNF-cycle/acceptance.json>`
+to attach verified subsequent refresh receipts matching every current source
+checksum. These identify retrieval time, request bounds and source hashes, not
+a complete per-record correction history. Publication time remains separate.
+
+The case-sensitive flag dictionary was checked against
+[CDEC FlagList](https://cdec.water.ca.gov/reportapp/javareports?name=FlagList)
+on November 15, 2026. Blank, e, r, A, s, N and t have generic provider definitions;
+X is unresolved. Precipitation-specific definitions for A/t are not reinterpreted
+as FNF-specific meanings. N denotes a provider error flag, but the existing
+retain-without-accuracy-assurance policy remains in effect for this pilot.
+No flag-based exclusion is silently introduced.
+
+`reference-records.json` now includes absent-period cases with surrounding rows
+and expected presentation line breaks (including KGF 1996-06-13), separately
+from explicit missing-value records. Consumers must detect skipped fixed-PST
+daily/monthly labels and insert presentation-only null gaps: `connectgaps=false`
+alone cannot break a line across an absent record. Published CSVs are not filled
+or modified, and monthly FNF does not inherit seasonal snow-course assumptions.
+
+V2 build: **5325304**, output
+`web/publications/observations/cdec-fnf-full-history-pilot-20261115-v2/`, using
+the passed FNF cycle `observations/work/station-cycles/5322182/acceptance.json`.
+Require the job-specific local acceptance before transfer. No upload or routine
+publication is enabled by the build.
+
+Job 5325304 completed in 18 seconds with passed local acceptance. Independent
+review (`web/work/observations/cdec-fnf-v2-review/acceptance.json`) verified all
+59 inventoried files, all 47 matched refresh receipts, the KGF absent-day fixture,
+and byte-for-byte equality of all 47 gzip data assets with v1. Focused tests:
+28 passed; Ruff passed. V1 is retained as historical review evidence; use v2
+for the next web-map integration review.
+
+V2 was subsequently uploaded at the user's request to the isolated public pilot:
+`https://cw3e.ucsd.edu/hydro/hydro_ops/observations/pilots/cdec-fnf-full-history-pilot-20261115-v2/catalog.json`.
+All three ordered Globus phases (assets, collections, catalog) succeeded.
+`web/work/observations/publish-cdec-fnf-pilot-20261115-v2/` contains the frozen
+plan, task receipts and passed HTTPS verification: all **60 files** matched
+local bytes/SHA-256, **47 gzip CSVs / 267,026 records** decoded successfully,
+and all responses allowed cross-origin access. Gzip assets use
+`application/x-gzip` without HTTP Content-Encoding (client decompression required).
+Existing SWE publications were untouched; no remote cleanup or routine FNF
+publication was enabled. Browser integration remains a separate web-map test.
 
 The observations subproject starts with metadata for the 24 station IDs in
 `config/cdec_fnf_stations.json`. Reproduce the snapshot with:
