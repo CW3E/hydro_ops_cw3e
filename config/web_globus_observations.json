@@ -1,0 +1,10 @@
+{
+  "source_collection_id": "63ab9e0e-2049-4aff-bfec-5dfb64aadc11",
+  "destination_collection_id": "de258060-df3f-4eaa-b10e-3799d6e6604f",
+  "source_project_root": "/mead/projects/cwp206/agentization/hydro_ops",
+  "destination_root": "/projects/website/mirror/htdocs/wrf_hydro/hydro_ops/observations",
+  "public_base_url": "https://cw3e.ucsd.edu/hydro/hydro_ops/observations/",
+  "client_id_env": "GLOBUS_NATIVE_CLIENT_ID",
+  "token_file": "~/.globus_transfer_tokens.json",
+  "production_enabled": false
+}
