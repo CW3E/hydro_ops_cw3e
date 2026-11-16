@@ -115,3 +115,11 @@ Keep code, tests and current operational documentation synchronized. Preserve
 unrelated worktree changes and historical evidence; do not treat old experiment
 scripts or results as current operational instructions. Commit/push when requested;
 exclude generated data, credentials, executables and runtime logs from commits.
+
+For authorized future pushes, use `bash bin/push_repo.sh`: it pushes `main` to
+`fallspinach/hydro_ops`, then updates the one-way `CW3E/hydro_ops_cw3e` mirror
+through the sibling bare clone `../hydro_ops_sync`. If the primary push succeeds
+but mirroring fails, report both outcomes and retry with `--sync-only`; never
+roll back the primary. Both repositories are intentionally public. Do not develop
+independently in the destination: mirror synchronization can delete/overwrite
+its refs. See [repository mirroring](docs/project_relocation.md#github-repository-mirror).

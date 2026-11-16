@@ -129,3 +129,47 @@ Tests exercise a copied wrapper under a different path (including spaces), expli
 site overrides, invalid-root rejection, argument/exit-code preservation, and cron
 rendering. Live login1 checks use a minimal environment and do not install cron,
 submit jobs, move archives, or rewrite runtime audit records.
+
+## GitHub repository mirror
+
+The authoritative repository is `https://github.com/fallspinach/hydro_ops.git`.
+Its one-way mirror is `https://github.com/CW3E/hydro_ops_cw3e.git`.
+Both are intentionally public. Never put credentials, generated products or
+private data in commits. Mirroring copies Git history/refs, not ignored project
+data, GitHub issues, releases, repository settings or access permissions.
+
+The dedicated **bare** clone is a sibling directory, `../hydro_ops_sync`, not
+a second working checkout. For future authorized pushes from the project root:
+
+```bash
+bash bin/push_repo.sh
+```
+
+This pushes local `main` to the primary repository first, fetches/prunes all
+primary refs into the bare clone, pushes them atomically with `--mirror` to the
+destination, then compares both remote ref listings. A local lock serializes
+invocations. Unexpected remote URLs or a non-bare mirror cause failure.
+Git has no post-push hook: direct `git push` bypasses this wrapper. After a
+direct push, a push from another checkout, or a failed mirror transfer, run:
+
+```bash
+bash bin/push_repo.sh --sync-only
+```
+
+Primary and mirror pushes are not one cross-repository transaction. If the
+primary succeeds and mirroring fails, keep the primary commit and retry the
+mirror; do not reset published history. Avoid independent development on the
+destination: `--mirror` may delete destination branches/tags absent from the
+primary and overwrite divergent refs. GitHub-managed/protected refs may reject
+mirroring; report that failure rather than removing protections automatically.
+
+When relocating, move the sibling bare clone as well, or recreate it:
+
+```bash
+git clone --mirror https://github.com/fallspinach/hydro_ops.git ../hydro_ops_sync
+git -C ../hydro_ops_sync remote add destination https://github.com/CW3E/hydro_ops_cw3e.git
+bash bin/push_repo.sh --sync-only
+```
+
+Only clone into a nonexistent path; do not overwrite an existing directory.
+HTTPS uses the existing Git credential helper; no token is stored in the script.
